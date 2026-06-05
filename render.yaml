@@ -65,8 +65,10 @@ services:
     runtime: static
     rootDir: frontend
     # This project uses pnpm (pnpm-lock.yaml is the committed lockfile).
-    # corepack ships pnpm without a separate install step.
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm run build
+    # Render natively detects the lockfile and puts pnpm on PATH — no
+    # corepack needed (corepack's pinned-version download fails on Render
+    # with a signature/keyid error).
+    buildCommand: pnpm install --frozen-lockfile && pnpm run build
     staticPublishPath: dist
     # SPA fallback so client-side routes (/admin/*, /d/:token) resolve.
     routes:
