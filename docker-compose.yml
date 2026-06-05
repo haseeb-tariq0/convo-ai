@@ -1,0 +1,16 @@
+# Postgres for when we wire the real DB layer. Not used by the current
+# in-memory build — keep it here so `make db` works once SQLAlchemy lands.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: convo
+      POSTGRES_PASSWORD: convo
+      POSTGRES_DB: convo_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - convo_pg:/var/lib/postgresql/data
+
+volumes:
+  convo_pg:

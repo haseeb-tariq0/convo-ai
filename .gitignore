@@ -1,0 +1,21 @@
+.env
+.env.local
+# Google service-account JSON keys — must NEVER be committed.
+sa.json
+*-sa.json
+*.serviceaccount.json
+*.pyc
+__pycache__/
+.venv/
+venv/
+node_modules/
+dist/
+.vite/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.DS_Store
+.idea/
+.vscode/
+*.log

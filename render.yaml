@@ -1,0 +1,81 @@
+# Render Blueprint — deploys the whole Convo AI app:
+#   • backend  → an always-on Python web service (the 30s/60s/1h scheduler
+#                runs in-process, so it needs a non-sleeping plan).
+#   • frontend → a static site (Vite build), with SPA rewrite.
+#
+# Place this file at your git repo ROOT. If your repo root is the parent of
+# `convo-ai/`, prefix the rootDir values with `convo-ai/`.
+#
+# After the first deploy, set the cross-references (marked "set after deploy"):
+#   - backend  CORS_ORIGINS / FRONTEND_URL → the frontend's https URL
+#   - frontend VITE_API_URL                → the backend's https URL
+# and add the frontend URL to Supabase → Auth → URL Configuration (redirect
+# URLs) so Google sign-in returns to production.
+
+services:
+  # ── Backend: FastAPI + APScheduler (always-on) ──────────────────────────
+  - type: web
+    name: convo-ai-backend
+    runtime: python
+    rootDir: backend
+    plan: starter # NOTE: 'free' web services sleep after ~15 min idle, which
+                  # STOPS the scheduler. 'starter' stays always-on.
+    buildCommand: pip install .
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: USE_IN_MEMORY_STORE
+        value: "false"
+      # Flip any of these to "true" for a demo without real Google/GA4/AI:
+      - key: USE_MOCK_SHEETS
+        value: "false"
+      - key: USE_MOCK_AI
+        value: "false"
+      - key: USE_MOCK_GA
+        value: "false"
+      - key: AI_PROVIDER
+        value: openai
+      # ── Secrets — set these in the Render dashboard (sync:false) ──────────
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON
+        sync: false # paste the whole service-account JSON as the value
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false # only if AI_PROVIDER=anthropic
+      - key: ADMIN_TOKEN
+        sync: false # legacy/CLI admin token
+      - key: CORS_ORIGINS
+        sync: false # set after deploy → the frontend's https URL
+      - key: FRONTEND_URL
+        sync: false # set after deploy → the frontend's https URL
+
+  # ── Frontend: Vite static SPA ───────────────────────────────────────────
+  - type: web
+    name: convo-ai-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    # SPA fallback so client-side routes (/admin/*, /d/:token) resolve.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Build-time (Vite inlines these). Set in the Render dashboard.
+      - key: VITE_API_URL
+        sync: false # set after deploy → the backend's https URL
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
