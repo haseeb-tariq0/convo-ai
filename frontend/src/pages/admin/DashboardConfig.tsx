@@ -10,9 +10,10 @@ import { confirm as confirmDialog } from '@/components/admin/useConfirm'
 import FieldRenderer from '@/components/charts/FieldRenderer'
 import DashboardGrid from '@/components/public/DashboardGrid'
 import { admin, publicApi } from '@/lib/api'
+import { defaultLayoutFor } from '@/lib/layout'
 import type { DashboardOut, FieldConfig, FieldLayout, LayoutConfig, LayoutSectionConfig, PublicFieldValue, SyncLogOut } from '@/types'
 
-type Tab = 'source' | 'fields' | 'layout' | 'builder' | 'branding' | 'settings'
+type Tab = 'source' | 'fields' | 'layout' | 'branding' | 'settings'
 
 type AccentStyle = CSSProperties & Record<`--${string}`, string>
 
@@ -229,7 +230,6 @@ function Editor({
               ['source', 'Source'],
               ['fields', 'Fields', fieldConfig.length],
               ['layout', 'Layout'],
-              ['builder', 'Builder'],
               ['branding', 'Branding'],
               ['settings', 'Settings'],
             ] as [Tab, string, number?][]
@@ -316,9 +316,6 @@ function Editor({
       )}
       {tab === 'fields' && <FieldEditor fields={fieldConfig} onChange={setFieldConfig} />}
       {tab === 'layout' && (
-        <LayoutTab layoutConfig={layoutConfig} setLayoutConfig={setLayoutConfig} />
-      )}
-      {tab === 'builder' && (
         <BuilderTab
           fieldConfig={fieldConfig}
           setFieldConfig={setFieldConfig}
@@ -497,6 +494,17 @@ function LayoutTab({
 // from the public data endpoint so the canvas shows real charts, not boxes.
 // ─────────────────────────────────────────────────────────────────────
 
+const ADD_TYPES: { type: string; label: string }[] = [
+  { type: 'metric', label: 'KPI tile' },
+  { type: 'line', label: 'Line chart' },
+  { type: 'gauge', label: 'Gauge' },
+  { type: 'pie', label: 'Pie / donut' },
+  { type: 'bar', label: 'Bar chart' },
+  { type: 'tag_cloud', label: 'Tag cloud' },
+  { type: 'map', label: 'Map' },
+  { type: 'table', label: 'Table' },
+]
+
 function BuilderTab({
   fieldConfig,
   setFieldConfig,
@@ -506,6 +514,7 @@ function BuilderTab({
   setFieldConfig: (f: FieldConfig[]) => void
   shareToken: string
 }) {
+  const [adding, setAdding] = useState(false)
   const dataQ = useQuery({
     queryKey: ['builder-data', shareToken],
     queryFn: () => publicApi.data(shareToken),
@@ -559,15 +568,48 @@ function BuilderTab({
     }
     if (clones.length) setFieldConfig([...fieldConfig, ...clones])
   }
+  function onAddWidget(type: string) {
+    const id = `w-${Math.random().toString(36).slice(2, 8)}`
+    const label = ADD_TYPES.find((t) => t.type === type)?.label ?? 'Widget'
+    const layout = defaultLayoutFor(type, fieldConfig.length, fieldConfig)
+    setFieldConfig([...fieldConfig, { id, type, label: `New ${label}`, layout }])
+    setAdding(false)
+  }
 
   return (
     <div className="info-card" style={{ padding: 0 }}>
-      <div className="info-card-head" style={{ padding: '14px 18px' }}>
+      <div className="info-card-head" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="t">Widget builder</span>
         <span className="sub">
-          Drag to move · drag the corner to resize · click/shift-click or marquee to select ·
-          Delete to remove · Ctrl/Cmd+D to duplicate · Save changes to persist
+          Drag to move · corner to resize · shift-click or drag a box to multi-select · Save changes to publish
         </span>
+        <div style={{ marginLeft: 'auto', position: 'relative' }}>
+          <button className="ghost-btn primary" onClick={() => setAdding((v) => !v)}>
+            <I name="plus" />
+            Add widget
+          </button>
+          {adding && (
+            <div
+              className="info-card"
+              style={{
+                position: 'absolute', top: '110%', right: 0, zIndex: 20,
+                padding: 6, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4,
+                minWidth: 220, boxShadow: '0 8px 28px rgba(0,0,0,.18)',
+              }}
+            >
+              {ADD_TYPES.map((t) => (
+                <button
+                  key={t.type}
+                  className="ghost-btn"
+                  style={{ justifyContent: 'flex-start' }}
+                  onClick={() => onAddWidget(t.type)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <div style={{ padding: 16 }}>
         {dataQ.isLoading ? (
