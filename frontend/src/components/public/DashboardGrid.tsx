@@ -60,6 +60,26 @@ export default function DashboardGrid({
     layoutById.set(c.id, c.layout ?? seed[c.id] ?? defaultLayoutFor(c.type, i, config)),
   )
 
+  // Guarantee a CLEAN layout on every render. Saved layouts from before
+  // collision handling existed (or hand-edited JSON) can overlap; without
+  // this, the grid would paint cards on top of each other on load — the
+  // "everything scattered" problem. We compact the rendered widgets in
+  // reading order (no priority) so nothing ever overlaps, in BOTH the public
+  // view and the editor (same component → identical, always tidy). Pure
+  // pass: non-overlapping layouts are left exactly as-is.
+  {
+    const cleaned = resolveCollisions(
+      ordered.map((c) => {
+        const l = layoutById.get(c.id)!
+        return { id: c.id, x: l.x, y: l.y, w: l.w, h: l.h, static: l.static }
+      }),
+      new Set<string>(),
+    )
+    for (const r of cleaned) {
+      layoutById.set(r.id, { x: r.x, y: r.y, w: r.w, h: r.h, ...(r.static ? { static: true } : {}) })
+    }
+  }
+
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [width, setWidth] = useState(0)
   useEffect(() => {
@@ -104,6 +124,25 @@ export default function DashboardGrid({
 
   function elFor(id: string): HTMLElement | null {
     return containerRef.current?.querySelector<HTMLElement>(`[data-grid-id="${id}"]`) ?? null
+  }
+
+  // Build the full layout set with `changed` applied, then push any
+  // overlapping cards down so nothing ends up on top of anything else.
+  // `priority` ids (the one being dragged/resized) keep their spot; the
+  // rest flow around them. Returns the complete id→layout map to persist.
+  function resolveAll(
+    changed: Record<string, FieldLayout>,
+    priority: Set<string>,
+  ): Record<string, FieldLayout> {
+    const items: GItem[] = ordered.map((c) => {
+      const b = changed[c.id] ?? layoutById.get(c.id)!
+      return { id: c.id, x: b.x, y: b.y, w: b.w, h: b.h, static: b.static }
+    })
+    const out: Record<string, FieldLayout> = {}
+    for (const r of resolveCollisions(items, priority)) {
+      out[r.id] = { x: r.x, y: r.y, w: r.w, h: r.h, ...(r.static ? { static: true } : {}) }
+    }
+    return out
   }
 
   function startMove(e: ReactPointerEvent, id: string) {
@@ -190,17 +229,24 @@ export default function DashboardGrid({
     const dy = e.clientY - a.sy
 
     if (a.kind === 'move') {
-      const out: Record<string, FieldLayout> = {}
+      const moved: Record<string, FieldLayout> = {}
+      const movedIds = new Set<string>()
       for (const it of a.items) {
         const id = it.el.getAttribute('data-grid-id')!
         const l = layoutById.get(id)!
         const x = clamp(Math.round(Math.max(0, it.ox + dx) / unitX), 0, GRID_COLS - l.w)
         const y = Math.max(0, Math.round(Math.max(0, it.oy + dy) / unitY))
+        moved[id] = { ...l, x, y }
+        movedIds.add(id)
+      }
+      const out = resolveAll(moved, movedIds)
+      for (const it of a.items) {
+        const id = it.el.getAttribute('data-grid-id')!
+        const r = out[id]
         it.el.style.transition = ''
-        it.el.style.left = pxX(x) + 'px'
-        it.el.style.top = pxY(y) + 'px'
+        it.el.style.left = pxX(r.x) + 'px'
+        it.el.style.top = pxY(r.y) + 'px'
         it.el.classList.remove('grid-dragging')
-        out[id] = { ...l, x, y }
       }
       onLayoutChange?.(out)
     } else if (a.kind === 'resize') {
@@ -209,11 +255,15 @@ export default function DashboardGrid({
       const ch = Math.max(ROW_H * 2 + GAP, a.oh + dy)
       const w = clamp(Math.round((cw + GAP) / unitX), 2, GRID_COLS - l.x)
       const h = Math.max(2, Math.round((ch + GAP) / unitY))
+      const out = resolveAll({ [a.id]: { ...l, w, h } }, new Set([a.id]))
+      const r = out[a.id]
       a.el.style.transition = ''
-      a.el.style.width = pxW(w) + 'px'
-      a.el.style.height = pxH(h) + 'px'
+      a.el.style.width = pxW(r.w) + 'px'
+      a.el.style.height = pxH(r.h) + 'px'
+      a.el.style.left = pxX(r.x) + 'px'
+      a.el.style.top = pxY(r.y) + 'px'
       a.el.classList.remove('grid-dragging')
-      onLayoutChange?.({ [a.id]: { ...l, w, h } })
+      onLayoutChange?.(out)
     } else {
       // Marquee: select every card whose rect intersects the box.
       const mq = marquee
@@ -365,4 +415,36 @@ export default function DashboardGrid({
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
+}
+
+type GItem = { id: string; x: number; y: number; w: number; h: number; static?: boolean }
+
+function gridCollides(a: GItem, b: GItem): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+}
+
+/** Vertical-push collision resolution (à la react-grid-layout). Items in
+ *  `priority` keep their position; every other item that would overlap an
+ *  already-placed item is pushed straight down until it sits clear. Placing
+ *  priority items first means the dragged/resized card "wins" and the rest
+ *  reflow beneath it — so two cards can never occupy the same cells. */
+function resolveCollisions(items: GItem[], priority: Set<string>): GItem[] {
+  const sorted = [...items].sort((a, b) => {
+    const pa = priority.has(a.id) ? 0 : 1
+    const pb = priority.has(b.id) ? 0 : 1
+    if (pa !== pb) return pa - pb
+    return a.y - b.y || a.x - b.x
+  })
+  const placed: GItem[] = []
+  for (const it of sorted) {
+    let cur: GItem = { ...it }
+    let guard = 0
+    let hit = placed.find((p) => gridCollides(cur, p))
+    while (hit && guard++ < 300) {
+      cur = { ...cur, y: hit.y + hit.h }
+      hit = placed.find((p) => gridCollides(cur, p))
+    }
+    placed.push(cur)
+  }
+  return placed
 }

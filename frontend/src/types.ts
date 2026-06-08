@@ -44,8 +44,21 @@ export interface LayoutSectionConfig {
   visible: boolean
   hiddenCards: string[]
 }
+// Per-magazine-card grid placement for the card-level Layout editor. When
+// `blocks` is present the public page + editor position each magazine card
+// (kpi, chart, gauge, revenue, …) from these coords; absent → the default
+// magazine arrangement. `hidden` removes a card from the layout.
+export interface BlockLayout {
+  id: string
+  x: number
+  y: number
+  w: number
+  h: number
+  hidden?: boolean
+}
 export interface LayoutConfig {
   sections: LayoutSectionConfig[]
+  blocks?: BlockLayout[]
 }
 
 export interface SyncLogOut {

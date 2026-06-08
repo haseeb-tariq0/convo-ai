@@ -8,10 +8,12 @@ import { I } from '@/components/admin/icons'
 import LogoUploader from '@/components/admin/LogoUploader'
 import { confirm as confirmDialog } from '@/components/admin/useConfirm'
 import FieldRenderer from '@/components/charts/FieldRenderer'
+import BlockGrid from '@/components/public/BlockGrid'
 import DashboardGrid from '@/components/public/DashboardGrid'
 import { admin, publicApi } from '@/lib/api'
 import { defaultLayoutFor } from '@/lib/layout'
-import type { DashboardOut, FieldConfig, FieldLayout, LayoutConfig, LayoutSectionConfig, PublicFieldValue, SyncLogOut } from '@/types'
+import PublicDashboard, { buildMagazineBlocks } from '@/pages/public/Dashboard'
+import type { BlockLayout, DashboardOut, FieldConfig, FieldLayout, LayoutConfig, LayoutSectionConfig, PublicFieldValue, SyncLogOut } from '@/types'
 
 type Tab = 'source' | 'fields' | 'layout' | 'branding' | 'settings'
 
@@ -316,11 +318,20 @@ function Editor({
       )}
       {tab === 'fields' && <FieldEditor fields={fieldConfig} onChange={setFieldConfig} />}
       {tab === 'layout' && (
-        <BuilderTab
-          fieldConfig={fieldConfig}
-          setFieldConfig={setFieldConfig}
-          shareToken={dashboard.share_token}
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <LayoutTab layoutConfig={layoutConfig} setLayoutConfig={setLayoutConfig} />
+          <div className="info-card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div className="info-card-head" style={{ padding: '14px 18px' }}>
+              <span className="t">Live preview</span>
+              <span className="sub">
+                Exactly what the client sees — updates instantly as you reorder / show-hide above. Save changes to publish.
+              </span>
+            </div>
+            <div style={{ borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
+              <PublicDashboard shareTokenProp={dashboard.share_token} layoutOverride={layoutConfig} />
+            </div>
+          </div>
+        </div>
       )}
       {tab === 'branding' && (
         <BrandingTab
@@ -631,6 +642,112 @@ function BuilderTab({
         )}
         <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 12 }}>
           Arrangement is saved to this dashboard when you click <strong>Save changes</strong> at the top.
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Layout tab — card-level editor. Renders the EXACT magazine cards the
+// public page shows (via buildMagazineBlocks) in a drag/resize/remove grid.
+// Edits persist as layout_config.blocks; the existing Save changes button
+// publishes them. Editor === public because both use the same builder.
+// ─────────────────────────────────────────────────────────────────────
+
+function BlockLayoutTab({
+  layoutConfig,
+  setLayoutConfig,
+  shareToken,
+  accent,
+}: {
+  layoutConfig: LayoutConfig | null
+  setLayoutConfig: (c: LayoutConfig) => void
+  shareToken: string
+  accent: string
+}) {
+  const cfgQ = useQuery({
+    queryKey: ['block-cfg', shareToken],
+    queryFn: () => publicApi.config(shareToken),
+    staleTime: 60_000,
+  })
+  const dataQ = useQuery({
+    queryKey: ['block-data', shareToken],
+    queryFn: () => publicApi.data(shareToken),
+    staleTime: 60_000,
+  })
+
+  if (cfgQ.isLoading || dataQ.isLoading) {
+    return <div className="info-card" style={{ padding: 24, color: 'var(--fg-3)' }}>Loading layout…</div>
+  }
+  if (!cfgQ.data || !dataQ.data) {
+    return <div className="info-card" style={{ padding: 24, color: 'var(--neg)' }}>Couldn’t load the dashboard preview.</div>
+  }
+
+  // Use the editor's live (unsaved) layoutConfig so drag/resize/remove show
+  // immediately, not the saved copy from the fetched config.
+  const cfg = { ...cfgQ.data, layout_config: layoutConfig }
+  const blocks = buildMagazineBlocks(cfg, dataQ.data, accent)
+  const blockMap = new Map<string, BlockLayout>((layoutConfig?.blocks ?? []).map((b) => [b.id, b]))
+
+  const commit = (next: Map<string, BlockLayout>) =>
+    setLayoutConfig({ sections: layoutConfig?.sections ?? [], blocks: [...next.values()] })
+
+  function onLayoutChange(layouts: Record<string, FieldLayout>) {
+    const next = new Map(blockMap)
+    for (const [id, l] of Object.entries(layouts)) {
+      next.set(id, { id, x: l.x, y: l.y, w: l.w, h: l.h, hidden: next.get(id)?.hidden })
+    }
+    commit(next)
+  }
+  function onRemove(ids: string[]) {
+    const next = new Map(blockMap)
+    for (const id of ids) {
+      const base = next.get(id) ?? blocks.find((b) => b.id === id)?.layout ?? { x: 0, y: 0, w: 4, h: 4 }
+      next.set(id, { id, x: base.x, y: base.y, w: base.w, h: base.h, hidden: true })
+    }
+    commit(next)
+  }
+  function reAdd(id: string) {
+    const next = new Map(blockMap)
+    const prev = next.get(id)
+    if (prev) next.set(id, { ...prev, hidden: false })
+    commit(next)
+  }
+
+  const hidden = (layoutConfig?.blocks ?? []).filter((b) => b.hidden)
+
+  return (
+    <div className="info-card" style={{ padding: 0 }}>
+      <div className="info-card-head" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span className="t">Layout</span>
+        <span className="sub">
+          This is your public dashboard — drag to move · corner to resize · ✕/Delete to remove a card · Save changes to publish
+        </span>
+        <button
+          className="ghost-btn"
+          style={{ marginLeft: 'auto' }}
+          onClick={() => setLayoutConfig({ sections: layoutConfig?.sections ?? [], blocks: [] })}
+          title="Reset to the default magazine layout"
+        >
+          <I name="refresh" /> Reset
+        </button>
+      </div>
+      {hidden.length > 0 && (
+        <div style={{ padding: '10px 18px', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', borderBottom: '1px solid var(--line)' }}>
+          <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>Removed cards:</span>
+          {hidden.map((b) => (
+            <button key={b.id} className="ghost-btn" style={{ padding: '2px 9px' }} onClick={() => reAdd(b.id)}>
+              <I name="plus" /> {b.id}
+            </button>
+          ))}
+        </div>
+      )}
+      <div style={{ padding: 16 }}>
+        <BlockGrid mode="edit" blocks={blocks} onLayoutChange={onLayoutChange} onRemove={onRemove} />
+        <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 12 }}>
+          Arrangement publishes to the public dashboard when you click <strong>Save changes</strong> at the top.
         </div>
       </div>
     </div>

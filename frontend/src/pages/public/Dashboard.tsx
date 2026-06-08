@@ -1,23 +1,27 @@
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { CircleMarker, MapContainer, TileLayer, Tooltip, ZoomControl } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useParams } from 'react-router-dom'
 
 import BrandLogo, { brandKeyFor } from '@/components/admin/BrandLogo'
+import BlockGrid, { type BlockItem } from '@/components/public/BlockGrid'
 import { publicApi } from '@/lib/api'
 import type {
   BarValue,
   BigNumberValue,
   DonutValue,
+  FieldLayout,
   FunnelValue,
   GaugeValue,
+  LayoutConfig,
   LineValue,
   MapValue,
   MetricValue,
   PieValue,
   ProgressBarValue,
   PublicDashboardConfig,
+  PublicDashboardData,
   PublicFieldValue,
   TableValue,
   TagCloudValue,
@@ -107,8 +111,111 @@ function bucketFields(fields: PublicFieldValue[]) {
   return buckets
 }
 
-export default function PublicDashboard() {
-  const { shareToken } = useParams<{ shareToken: string }>()
+// ── Card-level "block" layout ───────────────────────────────────────────
+// Each magazine card is a draggable/resizable block. These are the default
+// positions (mirroring the magazine's reading order) used when a dashboard
+// hasn't been customised; saved positions in layout_config.blocks override
+// them per-card. The SAME builder feeds the public page (read-only) and the
+// admin Layout editor (drag/resize) so they're identical and the cards stay
+// pixel-perfect — they ARE the magazine components.
+const MAGAZINE_BLOCK_META: { id: string; title: string; layout: FieldLayout }[] = [
+  { id: 'kpi',        title: 'KPI ribbon',           layout: { x: 0, y: 0,  w: 12, h: 3 } },
+  { id: 'chart',      title: 'Conversations chart',  layout: { x: 0, y: 3,  w: 12, h: 8 } },
+  { id: 'gauge',      title: 'Overall sentiment',    layout: { x: 0, y: 11, w: 4,  h: 7 } },
+  { id: 'revenue',    title: 'Booking revenue',      layout: { x: 4, y: 11, w: 4,  h: 7 } },
+  { id: 'escalation', title: 'Human escalations',    layout: { x: 8, y: 11, w: 4,  h: 7 } },
+  { id: 'intent',     title: 'Conversation intent',  layout: { x: 0, y: 18, w: 4,  h: 7 } },
+  { id: 'topics',     title: 'Top topics',           layout: { x: 4, y: 18, w: 8,  h: 7 } },
+  { id: 'geo',        title: 'Geography',            layout: { x: 0, y: 25, w: 8,  h: 9 } },
+  { id: 'languages',  title: 'Languages',            layout: { x: 8, y: 25, w: 4,  h: 4 } },
+  { id: 'countries',  title: 'Countries',            layout: { x: 8, y: 29, w: 4,  h: 5 } },
+  { id: 'table',      title: 'Recent conversations', layout: { x: 0, y: 34, w: 12, h: 8 } },
+]
+
+export function buildMagazineBlocks(
+  cfg: PublicDashboardConfig,
+  data: PublicDashboardData,
+  accentVar: string,
+): BlockItem[] {
+  const buckets = bucketFields(data.fields)
+  const heroLine = buckets.line[0] ?? null
+  const heroLineHasData = !!heroLine && ((heroLine.value as LineValue)?.points?.length ?? 0) > 0
+  const heroGauge = buckets.gauge[0] ?? null
+  const byId = (id: string) => data.fields.find((f) => f.id === id) ?? null
+  const byLabelIncludes = (kw: string) => buckets.metric.find((m) => m.label.toLowerCase().includes(kw)) ?? null
+  const revenueAed = byId('revenue_aed') ?? byLabelIncludes('aed')
+  const revenueUsd = byId('revenue_usd') ?? byLabelIncludes('usd')
+  const totalBookings = byId('total_bookings') ?? byLabelIncludes('booking')
+  const totalChats = byId('total_chats') ?? byLabelIncludes('total chats')
+  const escWeek = byId('escalations_week') ?? byLabelIncludes('escalat')
+  const escPos = byId('escalated_positive')
+  const escNeu = byId('escalated_neutral')
+  const escNeg = byId('escalated_negative')
+  const heroPie = buckets.pie[0] ?? null
+  const heroTagCloud = buckets.tag_cloud[0] ?? null
+  const heroMap = buckets.map[0] ?? null
+  const heroTable = buckets.table[0] ?? null
+  const langBar = buckets.bar.find((b) => b.label.toLowerCase().includes('lang')) ?? null
+  const countryBar = buckets.bar.find((b) => b.label.toLowerCase().includes('country')) ?? null
+  const KPI_RIBBON_ORDER = [
+    'total_chats', 'unique_users', 'user_messages', 'avg_interactions',
+    'avg_response_time', 'in_house_guests', 'revenue_aed',
+  ]
+  const metricsById = new Map(buckets.metric.map((m) => [m.id, m]))
+  const KPI_HIDDEN_IDS = new Set(['escalated_positive', 'escalated_neutral', 'escalated_negative'])
+  const orderedRibbon = KPI_RIBBON_ORDER
+    .map((id) => metricsById.get(id))
+    .filter((m): m is PublicFieldValue => !!m)
+  const usedIds = new Set([...orderedRibbon.map((m) => m.id), ...KPI_HIDDEN_IDS])
+  const extras = buckets.metric.filter((m) => !usedIds.has(m.id))
+  const kpiMetrics = [...orderedRibbon, ...extras].slice(0, 7)
+  const renderableKpis = kpiMetrics.filter((m) => {
+    const v = m.value as MetricValue
+    return !!v && typeof v === 'object' && !('error' in v)
+  })
+
+  const node: Record<string, ReactNode> = {}
+  if (renderableKpis.length > 0) node['kpi'] = <KPIRibbon metrics={renderableKpis} />
+  if (heroLineHasData) node['chart'] = <VolumeChart field={heroLine!} />
+  if (heroGauge) node['gauge'] = <GaugeCard field={heroGauge} totalChats={totalChats} escWeek={escWeek} />
+  if (revenueAed) node['revenue'] = <RevenueCard primary={revenueAed} usd={revenueUsd} bookings={totalBookings} />
+  if (escWeek || escPos || escNeu || escNeg) node['escalation'] = <EscalationCard total={escWeek} pos={escPos} neu={escNeu} neg={escNeg} />
+  if (heroPie) node['intent'] = <IntentBreakdown field={heroPie} />
+  if (heroTagCloud) node['topics'] = <TopicsCard field={heroTagCloud} />
+  if (heroMap || countryBar) node['geo'] = <GeoCard mapField={heroMap} countryBar={countryBar} accent={accentVar} />
+  if (langBar) node['languages'] = <RankedCard field={langBar} title="Languages" showPct />
+  if (countryBar) node['countries'] = <RankedCard field={countryBar} title="Countries" />
+  if (heroTable) node['table'] = <RecentTable field={heroTable} />
+
+  const saved = new Map((cfg.layout_config?.blocks ?? []).map((b) => [b.id, b]))
+  const blocks: BlockItem[] = []
+  for (const meta of MAGAZINE_BLOCK_META) {
+    const content = node[meta.id]
+    if (!content) continue
+    const s = saved.get(meta.id)
+    if (s?.hidden) continue
+    blocks.push({
+      id: meta.id,
+      title: meta.title,
+      layout: s ? { x: s.x, y: s.y, w: s.w, h: s.h } : meta.layout,
+      node: content,
+    })
+  }
+  return blocks
+}
+
+export default function PublicDashboard({
+  shareTokenProp,
+  layoutOverride,
+}: {
+  // When rendered as a live PREVIEW inside the admin Layout editor we pass the
+  // token directly and an unsaved layout_config so the preview reflects edits
+  // before they're saved. The router renders it with no props (uses useParams).
+  shareTokenProp?: string
+  layoutOverride?: LayoutConfig | null
+} = {}) {
+  const params = useParams<{ shareToken: string }>()
+  const shareToken = shareTokenProp ?? params.shareToken
   const [window_, setWindow] = useState<Window>({ kind: 'preset', days: 7 })
   const [tick, setTick] = useState(0)
   const [copied, setCopied] = useState(false)
@@ -236,9 +343,12 @@ export default function PublicDashboard() {
   // The admin "Layout" tab stores an ordered list of sections + per-card
   // visibility in cfg.layout_config. Null/absent → the full default magazine.
   const DEFAULT_SECTION_ORDER = ['volume', 'conversion', 'intent', 'geography', 'recent', 'custom']
+  // Live editor preview passes layoutOverride (unsaved edits); otherwise use
+  // the saved layout_config; otherwise the full default magazine.
+  const effectiveLayout = layoutOverride !== undefined ? layoutOverride : cfg.layout_config
   const orderedSections =
-    cfg.layout_config?.sections && cfg.layout_config.sections.length
-      ? cfg.layout_config.sections
+    effectiveLayout?.sections && effectiveLayout.sections.length
+      ? effectiveLayout.sections
       : DEFAULT_SECTION_ORDER.map((id) => ({ id, visible: true, hiddenCards: [] as string[] }))
 
   const renderSection = (id: string, hiddenCards: string[], num: number) => {
