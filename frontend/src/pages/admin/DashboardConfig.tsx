@@ -7,10 +7,12 @@ import FieldEditor from '@/components/admin/FieldEditor'
 import { I } from '@/components/admin/icons'
 import LogoUploader from '@/components/admin/LogoUploader'
 import { confirm as confirmDialog } from '@/components/admin/useConfirm'
-import { admin } from '@/lib/api'
-import type { DashboardOut, FieldConfig, LayoutConfig, LayoutSectionConfig, SyncLogOut } from '@/types'
+import FieldRenderer from '@/components/charts/FieldRenderer'
+import DashboardGrid from '@/components/public/DashboardGrid'
+import { admin, publicApi } from '@/lib/api'
+import type { DashboardOut, FieldConfig, FieldLayout, LayoutConfig, LayoutSectionConfig, PublicFieldValue, SyncLogOut } from '@/types'
 
-type Tab = 'source' | 'fields' | 'layout' | 'branding' | 'settings'
+type Tab = 'source' | 'fields' | 'layout' | 'builder' | 'branding' | 'settings'
 
 type AccentStyle = CSSProperties & Record<`--${string}`, string>
 
@@ -227,6 +229,7 @@ function Editor({
               ['source', 'Source'],
               ['fields', 'Fields', fieldConfig.length],
               ['layout', 'Layout'],
+              ['builder', 'Builder'],
               ['branding', 'Branding'],
               ['settings', 'Settings'],
             ] as [Tab, string, number?][]
@@ -314,6 +317,13 @@ function Editor({
       {tab === 'fields' && <FieldEditor fields={fieldConfig} onChange={setFieldConfig} />}
       {tab === 'layout' && (
         <LayoutTab layoutConfig={layoutConfig} setLayoutConfig={setLayoutConfig} />
+      )}
+      {tab === 'builder' && (
+        <BuilderTab
+          fieldConfig={fieldConfig}
+          setFieldConfig={setFieldConfig}
+          shareToken={dashboard.share_token}
+        />
       )}
       {tab === 'branding' && (
         <BrandingTab
@@ -472,6 +482,113 @@ function LayoutTab({
         })}
         <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>
           Changes publish to the public dashboard when you click <strong>Save changes</strong> at the top.
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Builder tab — freeform widget canvas. Drag to move, drag the corner to
+// resize, click/shift-click or marquee to multi-select, ✕/Delete to remove,
+// ⧉/Ctrl+D to duplicate. Edits the dashboard's field_config layouts; the
+// existing "Save changes" button persists it. Live widget values are pulled
+// from the public data endpoint so the canvas shows real charts, not boxes.
+// ─────────────────────────────────────────────────────────────────────
+
+function BuilderTab({
+  fieldConfig,
+  setFieldConfig,
+  shareToken,
+}: {
+  fieldConfig: FieldConfig[]
+  setFieldConfig: (f: FieldConfig[]) => void
+  shareToken: string
+}) {
+  const dataQ = useQuery({
+    queryKey: ['builder-data', shareToken],
+    queryFn: () => publicApi.data(shareToken),
+    staleTime: 60_000,
+  })
+
+  // One PublicFieldValue per configured widget so EVERY widget renders on the
+  // canvas (including freshly-duplicated ones the backend hasn't returned data
+  // for yet). Real value when the data endpoint has it, else null → placeholder.
+  const valById = new Map((dataQ.data?.fields ?? []).map((f) => [f.id, f.value]))
+  const fields: PublicFieldValue[] = fieldConfig.map((c) => ({
+    id: c.id,
+    type: String(c.type),
+    label: c.label,
+    value: valById.get(c.id) ?? null,
+  }))
+
+  // Null value → lightweight placeholder (avoids the chart components reading
+  // into a missing value); otherwise the real widget.
+  const renderWidget = (f: PublicFieldValue) =>
+    f.value == null ? (
+      <section className="ux-card p-5 h-full flex flex-col">
+        <div className="ux-label">{f.label}</div>
+        <div className="mt-2 text-sm text-muted italic">{f.type}</div>
+      </section>
+    ) : (
+      <FieldRenderer field={f} />
+    )
+
+  function onLayoutChange(layouts: Record<string, FieldLayout>) {
+    setFieldConfig(
+      fieldConfig.map((c) => (layouts[c.id] ? { ...c, layout: layouts[c.id] } : c)),
+    )
+  }
+  function onDeleteWidgets(ids: string[]) {
+    const drop = new Set(ids)
+    setFieldConfig(fieldConfig.filter((c) => !drop.has(c.id)))
+  }
+  function onDuplicateWidgets(ids: string[]) {
+    const drop = new Set(ids)
+    const clones: FieldConfig[] = []
+    for (const c of fieldConfig) {
+      if (!drop.has(c.id)) continue
+      const suffix = Math.random().toString(36).slice(2, 7)
+      const lay = c.layout
+      clones.push({
+        ...c,
+        id: `${c.id}-copy-${suffix}`,
+        layout: lay ? { ...lay, x: Math.min(lay.x + 1, 11), y: lay.y + 1 } : undefined,
+      })
+    }
+    if (clones.length) setFieldConfig([...fieldConfig, ...clones])
+  }
+
+  return (
+    <div className="info-card" style={{ padding: 0 }}>
+      <div className="info-card-head" style={{ padding: '14px 18px' }}>
+        <span className="t">Widget builder</span>
+        <span className="sub">
+          Drag to move · drag the corner to resize · click/shift-click or marquee to select ·
+          Delete to remove · Ctrl/Cmd+D to duplicate · Save changes to persist
+        </span>
+      </div>
+      <div style={{ padding: 16 }}>
+        {dataQ.isLoading ? (
+          <div style={{ color: 'var(--fg-3)', fontSize: 13, padding: 24 }}>Loading widgets…</div>
+        ) : fieldConfig.length === 0 ? (
+          <div style={{ color: 'var(--fg-3)', fontSize: 13, padding: 24 }}>
+            No widgets yet — add some in the <strong>Fields</strong> tab first.
+          </div>
+        ) : (
+          <DashboardGrid
+            mode="edit"
+            fields={fields}
+            config={fieldConfig}
+            renderWidget={renderWidget}
+            onLayoutChange={onLayoutChange}
+            onDeleteWidgets={onDeleteWidgets}
+            onDuplicateWidgets={onDuplicateWidgets}
+          />
+        )}
+        <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 12 }}>
+          Arrangement is saved to this dashboard when you click <strong>Save changes</strong> at the top.
         </div>
       </div>
     </div>
