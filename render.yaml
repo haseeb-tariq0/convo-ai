@@ -46,6 +46,8 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false # publishable key — the JWT verifier calls /auth/v1/user with it
       - key: GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON
         sync: false # paste the whole service-account JSON as the value
       - key: OPENAI_API_KEY
