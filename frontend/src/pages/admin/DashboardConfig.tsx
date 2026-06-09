@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import BrandLogo, { brandKeyFor, BRAND_PRESETS } from '@/components/admin/BrandLogo'
@@ -10,9 +10,10 @@ import { confirm as confirmDialog } from '@/components/admin/useConfirm'
 import FieldRenderer from '@/components/charts/FieldRenderer'
 import BlockGrid from '@/components/public/BlockGrid'
 import DashboardGrid from '@/components/public/DashboardGrid'
+import SortableMagazine from '@/components/public/SortableMagazine'
 import { admin, publicApi } from '@/lib/api'
 import { defaultLayoutFor } from '@/lib/layout'
-import PublicDashboard, { buildMagazineBlocks } from '@/pages/public/Dashboard'
+import { buildMagazineBlocks, MAGAZINE_BLOCK_META } from '@/pages/public/Dashboard'
 import type { BlockLayout, DashboardOut, FieldConfig, FieldLayout, LayoutConfig, LayoutSectionConfig, PublicFieldValue, SyncLogOut } from '@/types'
 
 type Tab = 'source' | 'fields' | 'layout' | 'branding' | 'settings'
@@ -316,22 +317,19 @@ function Editor({
           setColumnMap={setColumnMap}
         />
       )}
-      {tab === 'fields' && <FieldEditor fields={fieldConfig} onChange={setFieldConfig} />}
-      {tab === 'layout' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <LayoutTab layoutConfig={layoutConfig} setLayoutConfig={setLayoutConfig} />
-          <div className="info-card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div className="info-card-head" style={{ padding: '14px 18px' }}>
-              <span className="t">Live preview</span>
-              <span className="sub">
-                Exactly what the client sees — updates instantly as you reorder / show-hide above. Save changes to publish.
-              </span>
-            </div>
-            <div style={{ borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
-              <PublicDashboard shareTokenProp={dashboard.share_token} layoutOverride={layoutConfig} />
-            </div>
-          </div>
+      {tab === 'fields' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <AiWidgetBar dashboardId={dashboard.id} onAdd={(f) => setFieldConfig([...fieldConfig, f])} />
+          <FieldEditor fields={fieldConfig} onChange={setFieldConfig} />
         </div>
+      )}
+      {tab === 'layout' && (
+        <SortableLayoutTab
+          layoutConfig={layoutConfig}
+          setLayoutConfig={setLayoutConfig}
+          shareToken={dashboard.share_token}
+          accent={accentStyle['--accent'] ?? ''}
+        />
       )}
       {tab === 'branding' && (
         <BrandingTab
@@ -368,6 +366,11 @@ function Editor({
           removing={remove.isPending}
         />
       )}
+
+      <ChatAssistant
+        dashboardId={dashboard.id}
+        onAddWidget={(f) => setFieldConfig((prev) => [...prev, f])}
+      />
     </div>
   )
 }
@@ -751,6 +754,321 @@ function BlockLayoutTab({
         </div>
       </div>
     </div>
+  )
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Layout tab — drag-to-reorder magazine editor (Path 1). Renders the exact
+// magazine cards (buildMagazineBlocks) in a sortable auto-height grid; drag a
+// card to reposition, ✕ to remove, + Add to bring a removed card back. Order
+// + visibility persist in layout_config.blocks; the public page reads it.
+// ─────────────────────────────────────────────────────────────────────
+
+function SortableLayoutTab({
+  layoutConfig,
+  setLayoutConfig,
+  shareToken,
+  accent,
+}: {
+  layoutConfig: LayoutConfig | null
+  setLayoutConfig: (c: LayoutConfig) => void
+  shareToken: string
+  accent: string
+}) {
+  const cfgQ = useQuery({ queryKey: ['block-cfg', shareToken], queryFn: () => publicApi.config(shareToken), staleTime: 60_000 })
+  const dataQ = useQuery({ queryKey: ['block-data', shareToken], queryFn: () => publicApi.data(shareToken), staleTime: 60_000 })
+
+  if (cfgQ.isLoading || dataQ.isLoading) {
+    return <div className="info-card" style={{ padding: 24, color: 'var(--fg-3)' }}>Loading layout…</div>
+  }
+  if (!cfgQ.data || !dataQ.data) {
+    return <div className="info-card" style={{ padding: 24, color: 'var(--neg)' }}>Couldn’t load the dashboard preview.</div>
+  }
+
+  const cfg = { ...cfgQ.data, layout_config: layoutConfig }
+  const blocks = buildMagazineBlocks(cfg, dataQ.data, accent) // visible, in order
+  const savedBlocks = layoutConfig?.blocks ?? []
+  const hiddenBlocks = savedBlocks.filter((b) => b.hidden)
+  const hiddenIds = new Set(hiddenBlocks.map((b) => b.id))
+
+  const wOf = (id: string) =>
+    blocks.find((b) => b.id === id)?.layout.w ??
+    savedBlocks.find((b) => b.id === id)?.w ??
+    MAGAZINE_BLOCK_META.find((m) => m.id === id)?.layout.w ?? 4
+  const hOf = (id: string) =>
+    blocks.find((b) => b.id === id)?.layout.h ?? savedBlocks.find((b) => b.id === id)?.h ?? 0
+
+  function writeOrder(
+    visibleIds: string[],
+    extraHidden: string[] = [],
+    override: Record<string, { w?: number; h?: number }> = {},
+  ) {
+    const hidden = [...new Set([...hiddenBlocks.map((b) => b.id), ...extraHidden])].filter((id) => !visibleIds.includes(id))
+    const next: BlockLayout[] = [
+      ...visibleIds.map((id) => ({ id, x: 0, y: 0, w: override[id]?.w ?? wOf(id), h: override[id]?.h ?? hOf(id), hidden: false })),
+      ...hidden.map((id) => ({ id, x: 0, y: 0, w: wOf(id), h: hOf(id), hidden: true })),
+    ]
+    setLayoutConfig({ sections: layoutConfig?.sections ?? [], blocks: next })
+  }
+
+  const onReorder = (orderedIds: string[]) => writeOrder(orderedIds)
+  const onRemove = (id: string) => writeOrder(blocks.filter((b) => b.id !== id).map((b) => b.id), [id])
+  const onResize = (id: string, dims: { w?: number; h?: number }) => writeOrder(blocks.map((b) => b.id), [], { [id]: dims })
+  const reAdd = (id: string) => writeOrder([...blocks.map((b) => b.id), id])
+  const reset = () => setLayoutConfig({ sections: layoutConfig?.sections ?? [], blocks: [] })
+
+  const addable = MAGAZINE_BLOCK_META.filter((m) => hiddenIds.has(m.id))
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div className="info-card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span className="t">Layout</span>
+        <span className="sub">Drag a card to reposition · ✕ to remove · Save changes to publish</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          {addable.length > 0 && (
+            <>
+              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>Add back:</span>
+              {addable.map((m) => (
+                <button key={m.id} className="ghost-btn" style={{ padding: '2px 9px' }} onClick={() => reAdd(m.id)}>
+                  <I name="plus" /> {m.title}
+                </button>
+              ))}
+            </>
+          )}
+          <button className="ghost-btn" onClick={reset} title="Reset to the default magazine layout">
+            <I name="refresh" /> Reset
+          </button>
+        </div>
+      </div>
+      <div className="pub-root" style={{ padding: 16, background: 'var(--bg)', borderRadius: 'var(--d-radius-lg)', border: '1px solid var(--line)' }}>
+        <SortableMagazine blocks={blocks} edit onReorder={onReorder} onRemove={onRemove} onResize={onResize} />
+      </div>
+    </div>
+  )
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// AI Widget Builder — plain-English request → a field_config widget added
+// to the dashboard. The backend picks from a fixed recipe catalog so it can
+// only ever produce a widget the engine can compute. Non-destructive: the
+// widget is appended locally; the operator reviews + clicks Save changes.
+// ─────────────────────────────────────────────────────────────────────
+
+function AiWidgetBar({ dashboardId, onAdd }: { dashboardId: string; onAdd: (f: FieldConfig) => void }) {
+  const [prompt, setPrompt] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [added, setAdded] = useState<string | null>(null)
+
+  async function go() {
+    const p = prompt.trim()
+    if (!p || busy) return
+    setBusy(true)
+    setError(null)
+    setAdded(null)
+    try {
+      const field = await admin.aiWidget(dashboardId, p)
+      onAdd(field)
+      setAdded(field.label || 'widget')
+      setPrompt('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to generate widget')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="info-card" style={{ padding: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontWeight: 600 }}>✨ Add a widget with AI</span>
+        <span style={{ color: 'var(--fg-3)', fontSize: 12 }}>
+          Describe it in plain English — it’s added below; Save changes to publish.
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') go() }}
+          placeholder="e.g. bookings this month · top guest countries · messages mentioning ‘refund’"
+          disabled={busy}
+          style={{
+            flex: 1, padding: '9px 12px', borderRadius: 8, fontSize: 13,
+            border: '1px solid var(--line)', background: 'var(--bg)', color: 'var(--fg-1)',
+          }}
+        />
+        <button className="ghost-btn primary" onClick={go} disabled={busy || !prompt.trim()}>
+          <I name={busy ? 'refresh' : 'plus'} />
+          {busy ? 'Thinking…' : 'Generate'}
+        </button>
+      </div>
+      {error && <div style={{ marginTop: 8, fontSize: 12.5, color: 'var(--neg)' }}>{error}</div>}
+      {added && (
+        <div style={{ marginTop: 8, fontSize: 12.5, color: 'var(--pos)' }}>
+          ✓ Added “{added}” below — review it, then click <strong>Save changes</strong>.
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// AI assistant — floating chat bubble. Answers questions about this
+// dashboard's data and can add widgets (the backend returns a field_config
+// which we append locally; the operator reviews + saves).
+// ─────────────────────────────────────────────────────────────────────
+
+type ChatMsg = { role: 'user' | 'assistant'; content: string }
+
+const AI_SUGGESTIONS = [
+  'How are bookings trending?',
+  'What are guests asking about most?',
+  'Add a sentiment gauge',
+  'Top guest countries',
+]
+
+const AI_STYLE = `
+@keyframes ai-pop { from { opacity: 0; transform: translateY(14px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes ai-blink { 0%,80%,100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
+.ai-launcher { position: fixed; right: 24px; bottom: 24px; z-index: 60; display: inline-flex; align-items: center; gap: 9px; padding: 0 18px 0 15px; height: 52px; border: none; cursor: pointer; border-radius: 999px; color: #fff; font-weight: 600; font-size: 13.5px; letter-spacing: .1px; background: linear-gradient(135deg, var(--accent,#6366f1), color-mix(in srgb, var(--accent,#6366f1) 62%, #000)); box-shadow: 0 10px 26px -8px color-mix(in srgb, var(--accent,#6366f1) 65%, transparent), 0 4px 12px rgba(0,0,0,.18); transition: transform .18s, box-shadow .18s; }
+.ai-launcher:hover { transform: translateY(-2px); box-shadow: 0 16px 34px -8px color-mix(in srgb, var(--accent,#6366f1) 75%, transparent), 0 6px 16px rgba(0,0,0,.2); }
+.ai-launcher .sp { font-size: 17px; }
+.ai-panel { position: fixed; right: 24px; bottom: 24px; z-index: 60; width: 404px; max-width: calc(100vw - 32px); height: 564px; max-height: calc(100vh - 48px); display: flex; flex-direction: column; background: var(--bg-1, #fff); color: var(--fg-1); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; box-shadow: 0 28px 64px -16px rgba(0,0,0,.34), 0 10px 28px rgba(0,0,0,.16); animation: ai-pop .22s cubic-bezier(.2,.8,.3,1); }
+.ai-head { display: flex; align-items: center; gap: 11px; padding: 13px 14px; border-bottom: 1px solid var(--line); background: linear-gradient(135deg, color-mix(in srgb, var(--accent,#6366f1) 13%, transparent), transparent 70%); }
+.ai-av { width: 36px; height: 36px; border-radius: 11px; flex: none; display: grid; place-items: center; font-size: 18px; color: #fff; background: linear-gradient(135deg, var(--accent,#6366f1), color-mix(in srgb, var(--accent,#6366f1) 58%, #000)); box-shadow: 0 3px 10px -2px color-mix(in srgb, var(--accent,#6366f1) 70%, transparent); }
+.ai-head .ttl { font-weight: 650; font-size: 14px; line-height: 1.15; }
+.ai-head .sub { font-size: 11.5px; color: var(--fg-3); display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.ai-live { width: 6px; height: 6px; border-radius: 999px; background: #22c55e; box-shadow: 0 0 0 3px color-mix(in srgb, #22c55e 24%, transparent); }
+.ai-x { margin-left: auto; border: none; background: transparent; cursor: pointer; color: var(--fg-3); width: 30px; height: 30px; border-radius: 8px; font-size: 14px; display: grid; place-items: center; }
+.ai-x:hover { background: var(--bg-2, #f1f1f4); color: var(--fg-1); }
+.ai-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.ai-row { display: flex; gap: 9px; max-width: 90%; }
+.ai-row.me { align-self: flex-end; flex-direction: row-reverse; }
+.ai-row.bot { align-self: flex-start; }
+.ai-mini { width: 26px; height: 26px; border-radius: 8px; flex: none; display: grid; place-items: center; font-size: 13px; color: #fff; background: linear-gradient(135deg, var(--accent,#6366f1), color-mix(in srgb, var(--accent,#6366f1) 58%, #000)); }
+.ai-bubble { padding: 9px 13px; border-radius: 15px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.ai-row.bot .ai-bubble { background: var(--bg-2, #f4f4f6); color: var(--fg-1); border-top-left-radius: 5px; }
+.ai-row.me .ai-bubble { background: var(--accent, #6366f1); color: #fff; border-top-right-radius: 5px; }
+.ai-typing { display: inline-flex; gap: 4px; padding: 12px 14px; background: var(--bg-2,#f4f4f6); border-radius: 15px; border-top-left-radius: 5px; }
+.ai-typing i { width: 7px; height: 7px; border-radius: 999px; background: var(--fg-4, #9aa3b2); animation: ai-blink 1.3s infinite; }
+.ai-typing i:nth-child(2){ animation-delay: .18s; } .ai-typing i:nth-child(3){ animation-delay: .36s; }
+.ai-chips { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 16px 10px; }
+.ai-chip { font-size: 12px; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg-1,#fff); color: var(--fg-2); cursor: pointer; transition: .15s; }
+.ai-chip:hover { border-color: var(--accent,#6366f1); color: var(--accent,#6366f1); background: color-mix(in srgb, var(--accent,#6366f1) 7%, transparent); }
+.ai-foot { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); align-items: flex-end; }
+.ai-input { flex: 1; resize: none; max-height: 110px; padding: 10px 13px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--fg-1); font-size: 13px; font-family: inherit; line-height: 1.45; }
+.ai-input:focus { outline: none; border-color: var(--accent,#6366f1); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent,#6366f1) 16%, transparent); }
+.ai-send { flex: none; width: 38px; height: 38px; border-radius: 11px; border: none; cursor: pointer; color: #fff; background: var(--accent,#6366f1); display: grid; place-items: center; transition: .15s; }
+.ai-send:disabled { opacity: .4; cursor: default; }
+.ai-send:not(:disabled):hover { filter: brightness(1.08); transform: translateY(-1px); }
+`
+
+function ChatAssistant({ dashboardId, onAddWidget }: { dashboardId: string; onAddWidget: (f: FieldConfig) => void }) {
+  const [open, setOpen] = useState(false)
+  const [msgs, setMsgs] = useState<ChatMsg[]>([
+    {
+      role: 'assistant',
+      content: 'Hi 👋 I’m your dashboard assistant. Ask me about this dashboard’s data, or tell me to add a widget.',
+    },
+  ])
+  const [input, setInput] = useState('')
+  const [busy, setBusy] = useState(false)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+  }, [msgs, open, busy])
+
+  async function send(text: string) {
+    const q = text.trim()
+    if (!q || busy) return
+    const next: ChatMsg[] = [...msgs, { role: 'user', content: q }]
+    setMsgs(next)
+    setInput('')
+    setBusy(true)
+    try {
+      const res = await admin.assistant(dashboardId, next.map((m) => ({ role: m.role, content: m.content })))
+      let reply = res.reply || 'Done.'
+      if (res.widget) {
+        onAddWidget(res.widget)
+        reply += `\n\n✓ Added “${res.widget.label}” — review it in the Fields tab and click Save changes.`
+      }
+      setMsgs([...next, { role: 'assistant', content: reply }])
+    } catch (e) {
+      setMsgs([...next, { role: 'assistant', content: 'Sorry — ' + (e instanceof Error ? e.message : 'something went wrong.') }])
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <>
+        <style>{AI_STYLE}</style>
+        <button type="button" className="ai-launcher" onClick={() => setOpen(true)} title="AI assistant">
+          <span className="sp">✨</span> Ask AI
+        </button>
+      </>
+    )
+  }
+  return (
+    <>
+      <style>{AI_STYLE}</style>
+      <div className="ai-panel" role="dialog" aria-label="AI assistant">
+        <div className="ai-head">
+          <div className="ai-av">✨</div>
+          <div>
+            <div className="ttl">AI Assistant</div>
+            <div className="sub"><span className="ai-live" /> Online · grounded in your data</div>
+          </div>
+          <button type="button" className="ai-x" onClick={() => setOpen(false)} title="Close">✕</button>
+        </div>
+
+        <div className="ai-body" ref={scrollRef}>
+          {msgs.map((m, i) => (
+            <div key={i} className={'ai-row ' + (m.role === 'user' ? 'me' : 'bot')}>
+              {m.role === 'assistant' && <div className="ai-mini">✨</div>}
+              <div className="ai-bubble">{m.content}</div>
+            </div>
+          ))}
+          {busy && (
+            <div className="ai-row bot">
+              <div className="ai-mini">✨</div>
+              <div className="ai-typing"><i /><i /><i /></div>
+            </div>
+          )}
+        </div>
+
+        {msgs.length <= 1 && (
+          <div className="ai-chips">
+            {AI_SUGGESTIONS.map((s) => (
+              <button key={s} type="button" className="ai-chip" onClick={() => send(s)}>{s}</button>
+            ))}
+          </div>
+        )}
+
+        <div className="ai-foot">
+          <textarea
+            className="ai-input"
+            rows={1}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) } }}
+            placeholder="Ask, or add a widget…"
+            disabled={busy}
+          />
+          <button type="button" className="ai-send" onClick={() => send(input)} disabled={busy || !input.trim()} title="Send">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4 20-7z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </>
   )
 }
 

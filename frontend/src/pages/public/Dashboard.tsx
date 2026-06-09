@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import { useParams } from 'react-router-dom'
 
 import BrandLogo, { brandKeyFor } from '@/components/admin/BrandLogo'
+import FieldRenderer, { fieldSpanClass } from '@/components/charts/FieldRenderer'
 import BlockGrid, { type BlockItem } from '@/components/public/BlockGrid'
 import { publicApi } from '@/lib/api'
 import type {
@@ -118,7 +119,7 @@ function bucketFields(fields: PublicFieldValue[]) {
 // them per-card. The SAME builder feeds the public page (read-only) and the
 // admin Layout editor (drag/resize) so they're identical and the cards stay
 // pixel-perfect — they ARE the magazine components.
-const MAGAZINE_BLOCK_META: { id: string; title: string; layout: FieldLayout }[] = [
+export const MAGAZINE_BLOCK_META: { id: string; title: string; layout: FieldLayout }[] = [
   { id: 'kpi',        title: 'KPI ribbon',           layout: { x: 0, y: 0,  w: 12, h: 3 } },
   { id: 'chart',      title: 'Conversations chart',  layout: { x: 0, y: 3,  w: 12, h: 8 } },
   { id: 'gauge',      title: 'Overall sentiment',    layout: { x: 0, y: 11, w: 4,  h: 7 } },
@@ -187,21 +188,32 @@ export function buildMagazineBlocks(
   if (countryBar) node['countries'] = <RankedCard field={countryBar} title="Countries" />
   if (heroTable) node['table'] = <RecentTable field={heroTable} />
 
-  const saved = new Map((cfg.layout_config?.blocks ?? []).map((b) => [b.id, b]))
-  const blocks: BlockItem[] = []
-  for (const meta of MAGAZINE_BLOCK_META) {
-    const content = node[meta.id]
-    if (!content) continue
-    const s = saved.get(meta.id)
-    if (s?.hidden) continue
-    blocks.push({
-      id: meta.id,
-      title: meta.title,
-      layout: s ? { x: s.x, y: s.y, w: s.w, h: s.h } : meta.layout,
-      node: content,
-    })
+  // Order = saved block order first (skipping hidden / unavailable), then any
+  // remaining available cards in the default magazine reading order. `w` is
+  // the card's column span (12-col); height is auto (cards size to content).
+  const savedList = cfg.layout_config?.blocks ?? []
+  const savedById = new Map(savedList.map((b) => [b.id, b]))
+  const orderedIds: string[] = []
+  for (const b of savedList) {
+    if (b.hidden || !node[b.id]) continue
+    orderedIds.push(b.id)
   }
-  return blocks
+  for (const meta of MAGAZINE_BLOCK_META) {
+    if (savedById.has(meta.id) || !node[meta.id]) continue
+    orderedIds.push(meta.id)
+  }
+  return orderedIds.map((id) => {
+    const meta = MAGAZINE_BLOCK_META.find((m) => m.id === id)!
+    const s = savedById.get(id)
+    return {
+      id,
+      title: meta.title,
+      // w = column span; h = fixed height in row units, or 0 = auto (sizes to
+      // content). Height is only fixed once the operator drags to resize it.
+      layout: { x: 0, y: 0, w: s?.w ?? meta.layout.w, h: s?.h ?? 0 },
+      node: node[id]!,
+    }
+  })
 }
 
 export default function PublicDashboard({
@@ -339,6 +351,21 @@ export default function PublicDashboard({
     return !!v && typeof v === 'object' && !('error' in v)
   })
 
+  // Every field already shown by a curated card. Anything NOT in here (e.g. an
+  // AI-added or manually-added widget that doesn't fit a curated slot) is
+  // rendered in the "Custom widgets" section so it never silently disappears.
+  const consumedIds = new Set<string>(
+    [
+      ...renderableKpis.map((m) => m.id),
+      ...KPI_HIDDEN_IDS,
+      heroLine?.id, heroGauge?.id,
+      revenueAed?.id, revenueUsd?.id, totalBookings?.id, totalChats?.id,
+      escWeek?.id, escPos?.id, escNeu?.id, escNeg?.id,
+      heroPie?.id, heroTagCloud?.id, heroMap?.id,
+      langBar?.id, countryBar?.id, heroTable?.id,
+    ].filter((x): x is string => !!x),
+  )
+
   // ── Config-driven magazine sections ────────────────────────────────────
   // The admin "Layout" tab stores an ordered list of sections + per-card
   // visibility in cfg.layout_config. Null/absent → the full default magazine.
@@ -437,22 +464,28 @@ export default function PublicDashboard({
       }
       case 'custom': {
         if (hide('custom')) return null
-        const customFields = data.fields.filter((f) =>
-          f.type === 'big_number' || f.type === 'donut' ||
-          f.type === 'funnel' || f.type === 'progress_bar'
-        )
-        if (customFields.length === 0) return null
+        // Anything NOT already shown by a curated card above — AI-added or
+        // manually-added widgets. Skip error/empty values so we never show a
+        // broken card.
+        const leftover = data.fields.filter((f) => {
+          if (consumedIds.has(f.id)) return false
+          const v = f.value
+          return !(v && typeof v === 'object' && 'error' in v)
+        })
+        if (leftover.length === 0) return null
         return (
           <section className="section" key={id}>
             <SectionHead num={num} title="Custom widgets" />
-            <div className="grid-3">
-              {customFields.map((f) => {
-                if (f.type === 'big_number') return <BigNumberCard key={f.id} field={f} />
-                if (f.type === 'donut') return <DonutCard key={f.id} field={f} />
-                if (f.type === 'funnel') return <FunnelCard key={f.id} field={f} />
-                if (f.type === 'progress_bar') return <ProgressBarCard key={f.id} field={f} />
-                return null
-              })}
+            <div className="grid grid-cols-12 gap-4">
+              {leftover.map((f) => (
+                <div key={f.id} className={fieldSpanClass(f.type)}>
+                  {f.type === 'big_number' ? <BigNumberCard field={f} />
+                    : f.type === 'donut' ? <DonutCard field={f} />
+                    : f.type === 'funnel' ? <FunnelCard field={f} />
+                    : f.type === 'progress_bar' ? <ProgressBarCard field={f} />
+                    : <FieldRenderer field={f} />}
+                </div>
+              ))}
             </div>
           </section>
         )

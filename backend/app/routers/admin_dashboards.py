@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 
 from ..auth import AdminPrincipal, current_admin, require_admin
 from ..schemas.dashboard import DashboardCreate, DashboardOut, DashboardUpdate, SyncLogOut
@@ -125,6 +126,87 @@ def manual_sync(
         rows_added=added,
     )
     return {"rows_added": added}
+
+
+class AIWidgetRequest(BaseModel):
+    prompt: str
+
+
+@router.post("/dashboards/{dashboard_id}/ai-widget")
+def ai_widget(
+    dashboard_id: str,
+    payload: AIWidgetRequest,
+    principal: AdminPrincipal = Depends(current_admin),
+) -> dict:
+    """Turn a plain-English request into a ready-to-add field_config widget.
+    Returns the field_config dict (the frontend appends it to the dashboard's
+    field_config and the operator saves). Never persists on its own."""
+    d = store.get_dashboard(dashboard_id)
+    if not d:
+        raise HTTPException(status_code=404, detail="dashboard not found")
+    prompt = (payload.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    from ..services.widget_ai import generate_widget_config
+
+    try:
+        field = generate_widget_config(prompt, client_id=d.client_id)
+    except ValueError as e:
+        # No catalog match / missing keywords — a user-fixable request.
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001 — provider/network errors
+        raise HTTPException(status_code=502, detail=f"AI request failed: {e}") from e
+    audit.log_action(
+        principal,
+        "dashboard.ai_widget",
+        target_type="dashboard",
+        target_id=dashboard_id,
+        prompt=prompt,
+        widget_type=field.get("type"),
+    )
+    return field
+
+
+class AssistantMessage(BaseModel):
+    role: str
+    content: str
+
+
+class AssistantRequest(BaseModel):
+    messages: list[AssistantMessage]
+
+
+@router.post("/dashboards/{dashboard_id}/assistant")
+def assistant(
+    dashboard_id: str,
+    payload: AssistantRequest,
+    principal: AdminPrincipal = Depends(current_admin),
+) -> dict:
+    """Admin AI assistant for a dashboard. Answers questions about the data and
+    can add a widget. Returns {reply, widget}. `widget` (if present) is a
+    field_config the frontend appends; nothing persists until the operator
+    saves."""
+    d = store.get_dashboard(dashboard_id)
+    if not d:
+        raise HTTPException(status_code=404, detail="dashboard not found")
+    if not payload.messages:
+        raise HTTPException(status_code=400, detail="messages required")
+    from ..services import assistant as assistant_svc
+
+    try:
+        out = assistant_svc.chat(
+            [m.model_dump() for m in payload.messages], d, client_id=d.client_id
+        )
+    except Exception as e:  # noqa: BLE001 — provider/network errors
+        raise HTTPException(status_code=502, detail=f"Assistant request failed: {e}") from e
+    audit.log_action(
+        principal,
+        "dashboard.assistant",
+        target_type="dashboard",
+        target_id=dashboard_id,
+        added_widget=bool(out.get("widget")),
+    )
+    return out
 
 
 @router.post("/dashboards/{dashboard_id}/rotate-token", response_model=DashboardOut)

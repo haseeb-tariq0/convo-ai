@@ -17,6 +17,7 @@ import type {
   AITestResult,
   ClientOut,
   DashboardOut,
+  FieldConfig,
   GA4ConfigOut,
   PublicDashboardConfig,
   PublicDashboardData,
@@ -162,6 +163,21 @@ export const admin = {
     request<void>(`/api/admin/dashboards/${id}`, { admin: true, method: 'DELETE' }),
   manualSync: (id: string) =>
     request<{ rows_added: number }>(`/api/admin/dashboards/${id}/sync`, { admin: true, method: 'POST' }),
+  /** AI Widget Builder: plain-English request → a ready-to-add field_config
+   *  widget. The caller appends it to the dashboard's field_config and saves. */
+  aiWidget: (id: string, prompt: string) =>
+    request<FieldConfig>(`/api/admin/dashboards/${id}/ai-widget`, {
+      admin: true,
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
+    }),
+  /** Admin AI assistant for a dashboard: answers data questions + can add a
+   *  widget. Returns the reply and an optional field_config to append. */
+  assistant: (id: string, messages: { role: string; content: string }[]) =>
+    request<{ reply: string; widget: FieldConfig | null }>(
+      `/api/admin/dashboards/${id}/assistant`,
+      { admin: true, method: 'POST', body: JSON.stringify({ messages }) },
+    ),
   rotateToken: (id: string) =>
     request<DashboardOut>(`/api/admin/dashboards/${id}/rotate-token`, { admin: true, method: 'POST' }),
   recentLogs: (id: string, limit = 50) =>
