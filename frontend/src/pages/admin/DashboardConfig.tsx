@@ -44,6 +44,24 @@ const SEMANTIC_COLUMNS: { key: string; label: string; required?: boolean; type: 
 ]
 const COLUMN_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P']
 
+// The standard widget template a fresh dashboard ships with (mirrors the
+// backend's default_field_config / Nest layout). Used by Layout → Reset to
+// restore the default dashboard.
+const DEFAULT_TEMPLATE_FIELDS: FieldConfig[] = [
+  { id: 'chats_today', type: 'metric', label: 'Chats — today', source: 'chat_count', window_days: 1 },
+  { id: 'chats_week', type: 'metric', label: 'Chats — last 7 days', source: 'chat_count', window_days: 7 },
+  { id: 'chats_month', type: 'metric', label: 'Chats — last 30 days', source: 'chat_count', window_days: 30 },
+  { id: 'escalations_week', type: 'metric', label: 'Human escalations — 7d', source: 'human_escalations', window_days: 7 },
+  { id: 'sentiment_gauge', type: 'gauge', label: 'Overall sentiment', source: 'ai_sentiment_score' },
+  { id: 'volume_chart', type: 'line', label: 'Conversations over time', source: 'chat_rows', aggregation: 'count_by_day', time_field: 'occurred_at' },
+  { id: 'language_pie', type: 'pie', label: 'Language mix', group_by: 'Language' },
+  { id: 'channel_bar', type: 'bar', label: 'Channels', group_by: 'Channel' },
+  { id: 'country_bar', type: 'bar', label: 'Guests by country', group_by: 'Country' },
+  { id: 'intent_pie', type: 'pie', label: 'Conversation intent', source: 'ai_intent' },
+  { id: 'topics_cloud', type: 'tag_cloud', label: 'Top topics', source: 'ai_topics' },
+  { id: 'recent_chats', type: 'table', label: 'Recent conversations', limit: 25 },
+]
+
 export default function DashboardConfig() {
   const { dashboardId } = useParams<{ dashboardId: string }>()
   const qc = useQueryClient()
@@ -329,6 +347,17 @@ function Editor({
           setLayoutConfig={setLayoutConfig}
           shareToken={dashboard.share_token}
           accent={accentStyle['--accent'] ?? ''}
+          onReset={async () => {
+            const ok = await confirmDialog({
+              title: 'Reset to the default template?',
+              message:
+                'This restores the standard widget set and clears your layout changes (removed/added widgets and reordering). Nothing is saved until you click Save changes.',
+              confirmLabel: 'Reset to default',
+            })
+            if (!ok) return
+            setFieldConfig(DEFAULT_TEMPLATE_FIELDS.map((f) => ({ ...f })))
+            setLayoutConfig({ sections: [], blocks: [] })
+          }}
         />
       )}
       {tab === 'branding' && (
@@ -770,11 +799,13 @@ function SortableLayoutTab({
   setLayoutConfig,
   shareToken,
   accent,
+  onReset,
 }: {
   layoutConfig: LayoutConfig | null
   setLayoutConfig: (c: LayoutConfig) => void
   shareToken: string
   accent: string
+  onReset: () => void
 }) {
   const cfgQ = useQuery({ queryKey: ['block-cfg', shareToken], queryFn: () => publicApi.config(shareToken), staleTime: 60_000 })
   const dataQ = useQuery({ queryKey: ['block-data', shareToken], queryFn: () => publicApi.data(shareToken), staleTime: 60_000 })
@@ -816,7 +847,6 @@ function SortableLayoutTab({
   const onRemove = (id: string) => writeOrder(blocks.filter((b) => b.id !== id).map((b) => b.id), [id])
   const onResize = (id: string, dims: { w?: number; h?: number }) => writeOrder(blocks.map((b) => b.id), [], { [id]: dims })
   const reAdd = (id: string) => writeOrder([...blocks.map((b) => b.id), id])
-  const reset = () => setLayoutConfig({ sections: layoutConfig?.sections ?? [], blocks: [] })
 
   const addable = MAGAZINE_BLOCK_META.filter((m) => hiddenIds.has(m.id))
 
@@ -836,7 +866,7 @@ function SortableLayoutTab({
               ))}
             </>
           )}
-          <button className="ghost-btn" onClick={reset} title="Reset to the default magazine layout">
+          <button className="ghost-btn" onClick={onReset} title="Reset to the default dashboard template">
             <I name="refresh" /> Reset
           </button>
         </div>
