@@ -7,12 +7,21 @@ content is synthetic.
 """
 from __future__ import annotations
 
+import copy
 import logging
 from datetime import datetime, timedelta, timezone
 
 from ..store import ChatRow, GA4Snapshot
 
 log = logging.getLogger(__name__)
+
+
+def default_field_config() -> list[dict]:
+    """The standard widget template every NEW dashboard starts with (the Nest
+    Hotel layout). Returns a deep copy so each dashboard owns its own config.
+    The widgets render their empty states until a Sheet is connected + synced.
+    """
+    return copy.deepcopy(_NEST_FIELD_CONFIG)
 
 
 _NEST_FIELD_CONFIG = [

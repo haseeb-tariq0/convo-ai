@@ -43,10 +43,15 @@ def create_dashboard(
 ) -> DashboardOut:
     if not store.get_client(client_id):
         raise HTTPException(status_code=404, detail="client not found")
-    d = store.create_dashboard(
-        client_id=client_id,
-        **payload.model_dump(),
-    )
+    data = payload.model_dump()
+    # New dashboards start from the standard widget template (the Nest layout)
+    # so they're instantly populated instead of blank. An explicit field_config
+    # in the request still wins.
+    if not data.get("field_config"):
+        from ..services.seed import default_field_config
+
+        data["field_config"] = default_field_config()
+    d = store.create_dashboard(client_id=client_id, **data)
     audit.log_action(
         principal,
         "dashboard.create",
