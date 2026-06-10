@@ -718,6 +718,24 @@ def compute_field(field: dict, rows: list[ChatRow], ga4_snaps: list[GA4Snapshot]
     return fn(rows, field, ga4_snaps)
 
 
+# Production chats all arrive via WhatsApp; other Source values (APP/BUILDER/
+# VOICE) are test/dev traffic. Keep WhatsApp-only so the numbers reflect real
+# guest conversations (per the 6/9 review). Set _CHANNEL_KEEP = "" to disable.
+_CHANNEL_KEEP = "whatsapp"
+
+
+def _whatsapp_only(rows: list[ChatRow]) -> list[ChatRow]:
+    if not _CHANNEL_KEEP:
+        return rows
+    kept = [
+        r for r in rows
+        if _CHANNEL_KEEP in str(r.raw.get("Source") or r.raw.get("Channel") or "").lower()
+    ]
+    # Safety: if filtering would empty the dashboard (a client whose Source
+    # column uses different values), keep everything rather than show nothing.
+    return kept if kept else rows
+
+
 def compute_dashboard_data(
     dashboard_id: str,
     range_days: int | None = None,
@@ -737,7 +755,7 @@ def compute_dashboard_data(
     d = store.get_dashboard(dashboard_id)
     if not d:
         return {"fields": [], "generated_at": datetime.now(timezone.utc)}
-    all_rows = store.chat_rows_for_dashboard(dashboard_id)
+    all_rows = _whatsapp_only(store.chat_rows_for_dashboard(dashboard_id))
     ga4 = store.get_ga4_for_client(d.client_id)
     all_snaps = store.snapshots_for_integration(ga4.id) if ga4 else []
 
