@@ -44,13 +44,19 @@ def create_dashboard(
     if not store.get_client(client_id):
         raise HTTPException(status_code=404, detail="client not found")
     data = payload.model_dump()
-    # New dashboards start from the standard widget template (the Nest layout)
-    # so they're instantly populated instead of blank. An explicit field_config
-    # in the request still wins.
+    # New dashboards start from the full default template (the detailed Nest
+    # layout) AND the standard column mapping — every client Sheet shares the
+    # same columns (timestamp=A, user_id=B, channel=C, message=H), so there's
+    # nothing to map by hand. The operator only pastes the Sheet ID. An
+    # explicit field_config in the request still wins.
     if not data.get("field_config"):
-        from ..services.seed import default_field_config
+        from ..services.seed import default_column_map, default_field_config, default_sheet_tab
 
         data["field_config"] = default_field_config()
+        if not data.get("sheet_column_map"):
+            data["sheet_column_map"] = default_column_map()
+        if not data.get("sheet_tab_name") or data.get("sheet_tab_name") == "Sheet1":
+            data["sheet_tab_name"] = default_sheet_tab() or data.get("sheet_tab_name")
     d = store.create_dashboard(client_id=client_id, **data)
     audit.log_action(
         principal,
@@ -61,6 +67,20 @@ def create_dashboard(
         name=d.name,
     )
     return _serialize(d)
+
+
+@router.get("/default-template")
+def get_default_template(principal: AdminPrincipal = Depends(current_admin)) -> dict:
+    """The default dashboard template (detailed widget set + standard column
+    mapping). Used by the Layout 'Reset' action to restore a dashboard to the
+    default, and available for previews."""
+    from ..services.seed import default_column_map, default_field_config, default_sheet_tab
+
+    return {
+        "field_config": default_field_config(),
+        "sheet_column_map": default_column_map(),
+        "sheet_tab_name": default_sheet_tab(),
+    }
 
 
 @router.get("/clients/{client_id}/dashboards", response_model=list[DashboardOut])

@@ -355,7 +355,12 @@ function Editor({
               confirmLabel: 'Reset to default',
             })
             if (!ok) return
-            setFieldConfig(DEFAULT_TEMPLATE_FIELDS.map((f) => ({ ...f })))
+            try {
+              const tpl = await admin.defaultTemplate()
+              setFieldConfig(tpl.field_config?.length ? tpl.field_config : DEFAULT_TEMPLATE_FIELDS.map((f) => ({ ...f })))
+            } catch {
+              setFieldConfig(DEFAULT_TEMPLATE_FIELDS.map((f) => ({ ...f })))
+            }
             setLayoutConfig({ sections: [], blocks: [] })
           }}
         />

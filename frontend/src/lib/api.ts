@@ -143,6 +143,13 @@ export const admin = {
     request<void>(`/api/admin/clients/${id}`, { admin: true, method: 'DELETE' }),
 
   // dashboards
+  /** The default dashboard template (detailed widget set + standard column
+   *  map). Used by Layout → Reset to restore the default dashboard. */
+  defaultTemplate: () =>
+    request<{ field_config: FieldConfig[]; sheet_column_map: Record<string, string>; sheet_tab_name: string }>(
+      `/api/admin/default-template`,
+      { admin: true },
+    ),
   listDashboards: (clientId: string) =>
     request<DashboardOut[]>(`/api/admin/clients/${clientId}/dashboards`, { admin: true }),
   createDashboard: (clientId: string, body: Partial<DashboardOut>) =>

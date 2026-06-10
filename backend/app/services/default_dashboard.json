@@ -1,0 +1,218 @@
+{
+  "field_config": [
+    {
+      "id": "total_chats",
+      "type": "metric",
+      "label": "Total chats",
+      "source": "chat_sessions"
+    },
+    {
+      "id": "user_messages",
+      "type": "metric",
+      "label": "User messages",
+      "source": "user_messages"
+    },
+    {
+      "id": "unique_users",
+      "type": "metric",
+      "label": "Unique users",
+      "source": "unique_users"
+    },
+    {
+      "id": "total_bookings",
+      "type": "metric",
+      "label": "Total bookings",
+      "source": "ga4",
+      "metric_type": "bookings"
+    },
+    {
+      "id": "revenue_aed",
+      "type": "metric",
+      "label": "Total revenue (AED)",
+      "source": "ga4",
+      "currency": "AED",
+      "metric_type": "conversions"
+    },
+    {
+      "id": "revenue_usd",
+      "type": "metric",
+      "label": "Total revenue (USD)",
+      "source": "ga4",
+      "currency": "USD",
+      "metric_type": "conversions"
+    },
+    {
+      "id": "avg_response_time",
+      "type": "metric",
+      "label": "Average response time",
+      "source": "avg_response_time_seconds"
+    },
+    {
+      "id": "avg_interactions",
+      "type": "metric",
+      "label": "Average interactions",
+      "source": "avg_messages_per_chat"
+    },
+    {
+      "id": "chats_today",
+      "type": "metric",
+      "label": "Chats — today",
+      "source": "chat_count",
+      "window_days": 1
+    },
+    {
+      "id": "chats_week",
+      "type": "metric",
+      "label": "Chats — last 7 days",
+      "source": "chat_count",
+      "window_days": 7
+    },
+    {
+      "id": "chats_month",
+      "type": "metric",
+      "label": "Chats — last 30 days",
+      "source": "chat_count",
+      "window_days": 30
+    },
+    {
+      "id": "escalations_week",
+      "type": "metric",
+      "label": "Human escalations — 7d",
+      "source": "human_escalations",
+      "window_days": 7
+    },
+    {
+      "id": "sentiment_gauge",
+      "type": "gauge",
+      "label": "Overall sentiment",
+      "source": "ai_sentiment_score"
+    },
+    {
+      "id": "volume_chart",
+      "type": "line",
+      "label": "Conversations over time",
+      "source": "chat_rows",
+      "time_field": "occurred_at",
+      "aggregation": "count_by_day"
+    },
+    {
+      "id": "channel_bar",
+      "type": "bar",
+      "label": "Channels",
+      "group_by": "Source"
+    },
+    {
+      "id": "role_pie",
+      "type": "pie",
+      "label": "User vs Assistant",
+      "group_by": "Role"
+    },
+    {
+      "id": "intent_pie",
+      "type": "pie",
+      "label": "Conversation intent",
+      "source": "ai_intent"
+    },
+    {
+      "id": "topics_cloud",
+      "type": "tag_cloud",
+      "label": "Top topics",
+      "source": "ai_topics"
+    },
+    {
+      "id": "recent_chats",
+      "type": "table",
+      "label": "Recent conversations",
+      "limit": 25,
+      "columns": [
+        "Timestamp",
+        "Source",
+        "Role",
+        "Content",
+        "ai_sentiment",
+        "ai_intent"
+      ]
+    },
+    {
+      "id": "geo_users",
+      "type": "map",
+      "label": "Geographical analysis",
+      "source": "phone_country"
+    },
+    {
+      "id": "escalated_positive",
+      "type": "metric",
+      "label": "Escalated — positive",
+      "source": "escalated_by_sentiment",
+      "sentiment": "positive"
+    },
+    {
+      "id": "escalated_neutral",
+      "type": "metric",
+      "label": "Escalated — neutral",
+      "source": "escalated_by_sentiment",
+      "sentiment": "neutral"
+    },
+    {
+      "id": "escalated_negative",
+      "type": "metric",
+      "label": "Escalated — negative",
+      "source": "escalated_by_sentiment",
+      "sentiment": "negative"
+    },
+    {
+      "id": "faq_table",
+      "type": "table",
+      "label": "FAQ Analysis",
+      "limit": 20,
+      "source": "faq_questions"
+    },
+    {
+      "id": "ga4_revenue_table",
+      "type": "table",
+      "label": "GA4 Analysis",
+      "limit": 100,
+      "source": "ga4_revenue"
+    },
+    {
+      "id": "in_house_guests",
+      "type": "metric",
+      "label": "In-house guest chats",
+      "source": "in_house_guests"
+    },
+    {
+      "id": "booking_links_shared",
+      "type": "metric",
+      "label": "Booking links shared",
+      "source": "booking_links_shared"
+    },
+    {
+      "id": "languages_bar",
+      "type": "bar",
+      "label": "Languages",
+      "source": "language"
+    },
+    {
+      "id": "ai_country_map_62fb5d",
+      "type": "map",
+      "label": "Guest countries",
+      "source": "phone_country"
+    },
+    {
+      "id": "ai_keyword_count_6e20f8",
+      "type": "metric",
+      "label": "Messages mentioning 'refund'",
+      "source": "keyword_count",
+      "keywords": [
+        "refund"
+      ]
+    }
+  ],
+  "sheet_column_map": {
+    "channel": "C",
+    "message": "H",
+    "user_id": "B",
+    "timestamp": "A"
+  },
+  "sheet_tab_name": "Chat Logs"
+}

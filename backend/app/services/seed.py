@@ -8,20 +8,53 @@ content is synthetic.
 from __future__ import annotations
 
 import copy
+import json
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from ..store import ChatRow, GA4Snapshot
 
 log = logging.getLogger(__name__)
 
+# The default dashboard template every NEW dashboard ships with. This is the
+# real, detailed Nest layout (30 widgets) exported from the live dashboard —
+# not the trimmed seed — plus the standard column mapping, because every
+# client Sheet shares the same column layout (timestamp=A, user_id=B,
+# channel=C, message=H). New dashboards are therefore fully populated and
+# pre-mapped; the operator only pastes the Sheet ID.
+_DEFAULT_TEMPLATE_PATH = Path(__file__).parent / "default_dashboard.json"
+_DEFAULT_TEMPLATE: dict | None = None
+
+
+def _default_template() -> dict:
+    global _DEFAULT_TEMPLATE
+    if _DEFAULT_TEMPLATE is None:
+        try:
+            _DEFAULT_TEMPLATE = json.loads(_DEFAULT_TEMPLATE_PATH.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001 — fall back to the trimmed seed
+            log.warning("default_dashboard.json unreadable (%s); using seed config", e)
+            _DEFAULT_TEMPLATE = {
+                "field_config": copy.deepcopy(_NEST_FIELD_CONFIG),
+                "sheet_column_map": {"timestamp": "A", "user_id": "B", "channel": "C", "message": "H"},
+                "sheet_tab_name": "Chat Logs",
+            }
+    return _DEFAULT_TEMPLATE
+
 
 def default_field_config() -> list[dict]:
-    """The standard widget template every NEW dashboard starts with (the Nest
-    Hotel layout). Returns a deep copy so each dashboard owns its own config.
-    The widgets render their empty states until a Sheet is connected + synced.
-    """
-    return copy.deepcopy(_NEST_FIELD_CONFIG)
+    """Detailed default widget template (deep-copied so each dashboard owns it)."""
+    return copy.deepcopy(_default_template().get("field_config") or [])
+
+
+def default_column_map() -> dict:
+    """Standard Sheet column mapping shared by all client sheets."""
+    return dict(_default_template().get("sheet_column_map") or {})
+
+
+def default_sheet_tab() -> str | None:
+    """Standard Sheet tab name (e.g. 'Chat Logs')."""
+    return _default_template().get("sheet_tab_name")
 
 
 _NEST_FIELD_CONFIG = [
