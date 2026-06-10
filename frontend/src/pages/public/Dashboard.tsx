@@ -162,6 +162,9 @@ export function buildMagazineBlocks(
     byId('recent_chats') ?? buckets.table.find((t) => t.id !== 'faq_table') ?? buckets.table[0] ?? null
   const langBar = buckets.bar.find((b) => b.label.toLowerCase().includes('lang')) ?? null
   const countryBar = buckets.bar.find((b) => b.label.toLowerCase().includes('country')) ?? null
+  // Channels is dropped from the dashboard (WhatsApp-only) — flagged consumed
+  // so it never renders, including in the Custom widgets fallback.
+  const channelBar = byId('channel_bar') ?? buckets.bar.find((b) => b.label.toLowerCase().includes('channel')) ?? null
   const KPI_RIBBON_ORDER = [
     'total_chats', 'unique_users', 'user_messages', 'avg_interactions',
     'avg_response_time', 'in_house_guests', 'revenue_aed',
@@ -338,6 +341,9 @@ export default function PublicDashboard({
     byId('recent_chats') ?? buckets.table.find((t) => t.id !== 'faq_table') ?? buckets.table[0] ?? null
   const langBar = buckets.bar.find((b) => b.label.toLowerCase().includes('lang')) ?? null
   const countryBar = buckets.bar.find((b) => b.label.toLowerCase().includes('country')) ?? null
+  // Channels is dropped from the dashboard (WhatsApp-only) — flagged consumed
+  // so it never renders, including in the Custom widgets fallback.
+  const channelBar = byId('channel_bar') ?? buckets.bar.find((b) => b.label.toLowerCase().includes('channel')) ?? null
   // KPI ribbon — up to 7 metrics in the v3 design's order; the escalation
   // breakdown fields are shown in the EscalationCard, not as standalone KPIs.
   const KPI_RIBBON_ORDER = [
@@ -371,6 +377,7 @@ export default function PublicDashboard({
       escWeek?.id, escPos?.id, escNeu?.id, escNeg?.id,
       heroPie?.id, heroTagCloud?.id, heroMap?.id,
       langBar?.id, countryBar?.id, heroTable?.id, faqTable?.id,
+      channelBar?.id, // Channels removed (WhatsApp-only)
     ].filter((x): x is string => !!x),
   )
 
@@ -429,14 +436,14 @@ export default function PublicDashboard({
         return (
           <section className="section" key={id}>
             <SectionHead num={num} title="What guests ask about" />
-            <div className="grid-3">
-              {showPie && <IntentBreakdown field={heroPie!} />}
-              {showTopics && (
-                <div className="span-2">
-                  <TopicsCard field={heroTagCloud!} />
-                </div>
-              )}
-            </div>
+            {/* Intent gets its own full-width row now that Channels is removed —
+                shows the full breakdown + legend. Topics + FAQ stack below. */}
+            {showPie && <IntentBreakdown field={heroPie!} />}
+            {showTopics && (
+              <div style={{ marginTop: showPie ? 16 : 0 }}>
+                <TopicsCard field={heroTagCloud!} />
+              </div>
+            )}
             {/* FAQ — top frequently-asked questions, below Top Topics */}
             {showFaq && (
               <div style={{ marginTop: 16 }}>

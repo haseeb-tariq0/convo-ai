@@ -96,12 +96,6 @@
       "aggregation": "count_by_day"
     },
     {
-      "id": "channel_bar",
-      "type": "bar",
-      "label": "Channels",
-      "group_by": "Source"
-    },
-    {
       "id": "role_pie",
       "type": "pie",
       "label": "User vs Assistant",
