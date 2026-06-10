@@ -109,27 +109,37 @@ def _ask_chat(provider: str, api_key: str, model: str, system: str, messages: li
         {"role": "assistant" if m.get("role") == "assistant" else "user", "content": str(m.get("content", ""))}
         for m in messages
     ][-12:]
-    if provider == "openai":
-        from openai import OpenAI  # type: ignore
 
-        client = OpenAI(api_key=api_key)
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "system", "content": system}, *history],
-            temperature=0.3,
-            max_tokens=600,
-            response_format={"type": "json_object"},
-        )
-        return resp.choices[0].message.content or "{}"
-    if provider in ("claude", "anthropic"):
-        from anthropic import Anthropic  # type: ignore
+    # Retry transient network blips (notably Windows' WinError 10035 non-blocking
+    # socket flake under HTTP/2) so the assistant doesn't fail on a hiccup.
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            if provider == "openai":
+                from openai import OpenAI  # type: ignore
 
-        client = Anthropic(api_key=api_key)
-        resp = client.messages.create(
-            model=model,
-            max_tokens=600,
-            system=system + "\n\nRespond with ONLY the JSON object, no prose around it.",
-            messages=history or [{"role": "user", "content": "Hello"}],
-        )
-        return resp.content[0].text  # type: ignore[attr-defined]
-    raise RuntimeError(f"Unknown AI provider {provider!r}")
+                client = OpenAI(api_key=api_key, max_retries=0)
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "system", "content": system}, *history],
+                    temperature=0.3,
+                    max_tokens=600,
+                    response_format={"type": "json_object"},
+                )
+                return resp.choices[0].message.content or "{}"
+            if provider in ("claude", "anthropic"):
+                from anthropic import Anthropic  # type: ignore
+
+                client = Anthropic(api_key=api_key)
+                resp = client.messages.create(
+                    model=model,
+                    max_tokens=600,
+                    system=system + "\n\nRespond with ONLY the JSON object, no prose around it.",
+                    messages=history or [{"role": "user", "content": "Hello"}],
+                )
+                return resp.content[0].text  # type: ignore[attr-defined]
+            raise RuntimeError(f"Unknown AI provider {provider!r}")
+        except Exception as e:  # noqa: BLE001 — retry transient errors
+            last_err = e
+            log.warning("assistant model call failed (attempt %d): %s", attempt + 1, e)
+    raise last_err or RuntimeError("AI call failed")

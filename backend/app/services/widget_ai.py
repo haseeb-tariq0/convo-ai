@@ -112,30 +112,38 @@ def assemble_widget(sel: dict[str, Any]) -> dict[str, Any]:
 
 
 def _ask_model(provider: str, api_key: str, model: str, system: str, prompt: str) -> str:
-    if provider == "openai":
-        from openai import OpenAI  # type: ignore
+    # Retry transient network blips (Windows WinError 10035 socket flake, etc.).
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            if provider == "openai":
+                from openai import OpenAI  # type: ignore
 
-        client = OpenAI(api_key=api_key)
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0,
-            max_tokens=300,
-            response_format={"type": "json_object"},
-        )
-        return resp.choices[0].message.content or "{}"
-    if provider in ("claude", "anthropic"):
-        from anthropic import Anthropic  # type: ignore
+                client = OpenAI(api_key=api_key, max_retries=0)
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0,
+                    max_tokens=300,
+                    response_format={"type": "json_object"},
+                )
+                return resp.choices[0].message.content or "{}"
+            if provider in ("claude", "anthropic"):
+                from anthropic import Anthropic  # type: ignore
 
-        client = Anthropic(api_key=api_key)
-        resp = client.messages.create(
-            model=model,
-            max_tokens=300,
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return resp.content[0].text  # type: ignore[attr-defined]
-    raise RuntimeError(f"Unknown AI provider {provider!r}")
+                client = Anthropic(api_key=api_key)
+                resp = client.messages.create(
+                    model=model,
+                    max_tokens=300,
+                    system=system,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                return resp.content[0].text  # type: ignore[attr-defined]
+            raise RuntimeError(f"Unknown AI provider {provider!r}")
+        except Exception as e:  # noqa: BLE001 — retry transient errors
+            last_err = e
+            log.warning("widget AI call failed (attempt %d): %s", attempt + 1, e)
+    raise last_err or RuntimeError("AI call failed")
