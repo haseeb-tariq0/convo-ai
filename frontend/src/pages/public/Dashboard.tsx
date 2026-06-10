@@ -33,6 +33,7 @@ import type {
 type Window =
   | { kind: 'preset'; days: 1 | 7 | 30 | 90 }
   | { kind: 'ytd' }
+  | { kind: 'all' }
   | { kind: 'custom'; from: string; to: string }
 
 const PRESETS: { days: 1 | 7 | 30 | 90; chip: string }[] = [
@@ -61,6 +62,9 @@ function shortRangeLabel(w: Window): string {
   if (w.kind === 'ytd') {
     const r = ytdRange()
     return `Jan 1 – ${new Date(r.to).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+  }
+  if (w.kind === 'all') {
+    return 'All time'
   }
   return `${new Date(w.from).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${new Date(w.to).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
 }
@@ -259,8 +263,12 @@ export default function PublicDashboard({
   const dataQuery = useQuery({
     queryKey: ['public-data', shareToken, window_],
     queryFn: () => {
-      // Translate the window state to backend params. YTD → custom Jan 1
-      // → today. Custom passes through. Preset uses rangeDays.
+      // Translate the window state to backend params. All → no params (the
+      // backend shows everything). YTD → custom Jan 1 → today. Custom passes
+      // through. Preset uses rangeDays.
+      if (window_.kind === 'all') {
+        return publicApi.data(shareToken!)
+      }
       if (window_.kind === 'preset') {
         return publicApi.data(shareToken!, { rangeDays: window_.days })
       }
@@ -708,6 +716,13 @@ function DateRangeControls({
           onClick={() => onChange({ kind: 'ytd' })}
         >
           YTD
+        </button>
+        <button
+          className={value.kind === 'all' ? 'active' : ''}
+          onClick={() => onChange({ kind: 'all' })}
+          title="All time — every conversation on record"
+        >
+          All
         </button>
       </div>
       <div style={{ position: 'relative' }}>
