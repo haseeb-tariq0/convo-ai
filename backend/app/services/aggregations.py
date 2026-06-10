@@ -405,6 +405,18 @@ def compute_line(rows: list[ChatRow], field: dict, ga4_snaps: list[GA4Snapshot])
         ordered = sorted(counts.items())
         return {"points": [{"x": d, "y": c} for d, c in ordered]}
 
+    if agg == "sessions_by_day":
+        # Distinct Session IDs per day — a real "conversations/sessions over
+        # time" trend, not a message-volume trend (per the 6/9 review).
+        seen: dict[str, set] = defaultdict(set)
+        for r in rows:
+            sid = r.raw.get("Session ID")
+            if not r.occurred_at or not sid:
+                continue
+            seen[r.occurred_at.date().isoformat()].add(sid)
+        ordered = sorted(seen.items())
+        return {"points": [{"x": d, "y": len(s)} for d, s in ordered]}
+
     return {"points": []}
 
 

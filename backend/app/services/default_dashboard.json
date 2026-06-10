@@ -57,21 +57,21 @@
       "id": "chats_today",
       "type": "metric",
       "label": "Chats — today",
-      "source": "chat_count",
+      "source": "chat_sessions",
       "window_days": 1
     },
     {
       "id": "chats_week",
       "type": "metric",
       "label": "Chats — last 7 days",
-      "source": "chat_count",
+      "source": "chat_sessions",
       "window_days": 7
     },
     {
       "id": "chats_month",
       "type": "metric",
       "label": "Chats — last 30 days",
-      "source": "chat_count",
+      "source": "chat_sessions",
       "window_days": 30
     },
     {
@@ -93,7 +93,7 @@
       "label": "Conversations over time",
       "source": "chat_rows",
       "time_field": "occurred_at",
-      "aggregation": "count_by_day"
+      "aggregation": "sessions_by_day"
     },
     {
       "id": "role_pie",
