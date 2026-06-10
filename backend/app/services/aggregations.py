@@ -579,7 +579,7 @@ def _compute_faq_table(rows: list[ChatRow], field: dict) -> dict:
             display[norm] = disp
     ranked = sorted(sessions_by_q.items(), key=lambda kv: len(kv[1]), reverse=True)[:limit]
     body = [
-        {"Question": display[norm], "Occurrences": len(sids)}
+        {"Question": display[norm], "Conversations": len(sids)}
         for norm, sids in ranked
     ]
     return {"columns": ["Question", "Conversations"], "rows": body}
