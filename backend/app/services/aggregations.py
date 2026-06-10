@@ -554,7 +554,11 @@ def _compute_faq_table(rows: list[ChatRow], field: dict) -> dict:
     # Map normalized question → (display form, count). The first time we
     # see a normalized question, capture the original (title-cased) form for
     # display so the table doesn't read as all-lowercase.
-    counts: Counter = Counter()
+    # Count DISTINCT conversations that asked each question, not raw message
+    # occurrences — a templated question repeated within/across messages
+    # shouldn't read as "asked 126 times" (per the 6/9 review). One session
+    # asking it many times counts once.
+    sessions_by_q: dict[str, set] = defaultdict(set)
     display: dict[str, str] = {}
     for r in rows:
         if str(r.raw.get("Role") or "").lower() != "user":
@@ -565,18 +569,20 @@ def _compute_faq_table(rows: list[ChatRow], field: dict) -> dict:
         norm = _normalize_question(raw_text)
         if not _is_faq_question(norm):
             continue
-        counts[norm] += 1
+        sid = r.raw.get("Session ID") or r.id
+        sessions_by_q[norm].add(sid)
         if norm not in display:
             # Mild title-case: capitalize first letter, ensure trailing ?.
             disp = norm[0].upper() + norm[1:]
             if not (disp.endswith("?") or disp.endswith("؟")):
                 disp += "?"
             display[norm] = disp
+    ranked = sorted(sessions_by_q.items(), key=lambda kv: len(kv[1]), reverse=True)[:limit]
     body = [
-        {"Question": display[norm], "Occurrences": n}
-        for norm, n in counts.most_common(limit)
+        {"Question": display[norm], "Occurrences": len(sids)}
+        for norm, sids in ranked
     ]
-    return {"columns": ["Question", "Occurrences"], "rows": body}
+    return {"columns": ["Question", "Conversations"], "rows": body}
 
 
 def compute_map(rows: list[ChatRow], field: dict, ga4_snaps: list[GA4Snapshot]) -> dict:
