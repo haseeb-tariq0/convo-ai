@@ -155,7 +155,11 @@ export function buildMagazineBlocks(
   const heroPie = buckets.pie[0] ?? null
   const heroTagCloud = buckets.tag_cloud[0] ?? null
   const heroMap = buckets.map[0] ?? null
-  const heroTable = buckets.table[0] ?? null
+  // FAQ table (top frequently-asked questions) renders below Top Topics; the
+  // recent-conversations table is pinned so the two don't get swapped.
+  const faqTable = byId('faq_table') ?? null
+  const heroTable =
+    byId('recent_chats') ?? buckets.table.find((t) => t.id !== 'faq_table') ?? buckets.table[0] ?? null
   const langBar = buckets.bar.find((b) => b.label.toLowerCase().includes('lang')) ?? null
   const countryBar = buckets.bar.find((b) => b.label.toLowerCase().includes('country')) ?? null
   const KPI_RIBBON_ORDER = [
@@ -327,7 +331,11 @@ export default function PublicDashboard({
   const heroPie = buckets.pie[0] ?? null
   const heroTagCloud = buckets.tag_cloud[0] ?? null
   const heroMap = buckets.map[0] ?? null
-  const heroTable = buckets.table[0] ?? null
+  // FAQ table (top frequently-asked questions) renders below Top Topics; the
+  // recent-conversations table is pinned so the two don't get swapped.
+  const faqTable = byId('faq_table') ?? null
+  const heroTable =
+    byId('recent_chats') ?? buckets.table.find((t) => t.id !== 'faq_table') ?? buckets.table[0] ?? null
   const langBar = buckets.bar.find((b) => b.label.toLowerCase().includes('lang')) ?? null
   const countryBar = buckets.bar.find((b) => b.label.toLowerCase().includes('country')) ?? null
   // KPI ribbon — up to 7 metrics in the v3 design's order; the escalation
@@ -362,7 +370,7 @@ export default function PublicDashboard({
       revenueAed?.id, revenueUsd?.id, totalBookings?.id, totalChats?.id,
       escWeek?.id, escPos?.id, escNeu?.id, escNeg?.id,
       heroPie?.id, heroTagCloud?.id, heroMap?.id,
-      langBar?.id, countryBar?.id, heroTable?.id,
+      langBar?.id, countryBar?.id, heroTable?.id, faqTable?.id,
     ].filter((x): x is string => !!x),
   )
 
@@ -416,7 +424,8 @@ export default function PublicDashboard({
       case 'intent': {
         const showPie = !!heroPie && !hide('intent')
         const showTopics = !!heroTagCloud && !hide('topics')
-        if (!showPie && !showTopics) return null
+        const showFaq = !!faqTable && !hide('faq')
+        if (!showPie && !showTopics && !showFaq) return null
         return (
           <section className="section" key={id}>
             <SectionHead num={num} title="What guests ask about" />
@@ -428,6 +437,12 @@ export default function PublicDashboard({
                 </div>
               )}
             </div>
+            {/* FAQ — top frequently-asked questions, below Top Topics */}
+            {showFaq && (
+              <div style={{ marginTop: 16 }}>
+                <FieldRenderer field={faqTable!} />
+              </div>
+            )}
           </section>
         )
       }
@@ -630,7 +645,7 @@ export default function PublicDashboard({
             <span className="mono">00:{String(remainingSec).padStart(2, '0')}</span>
           </div>
           <div>
-            Powered by <span className="footer-brand">Convo AI</span> · Nexa Digital
+            Powered by <span className="footer-brand">Next AI Lab</span> · Nexa Digital
             <span style={{ color: 'var(--fg-5)', margin: '0 10px' }}>·</span>
             <span className="mono">v2.4.0</span>
           </div>
@@ -813,6 +828,35 @@ function fmt(n: number): string {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(n)
 }
 
+// Hover explanations for metrics whose logic clients ask about (per the
+// 6/9 review with Mohsin: explain in-house guests + sentiment classification).
+const FIELD_INFO: Record<string, string> = {
+  in_house_guests:
+    'Identified by keyword mapping — messages that mention a room number or in-stay keywords are flagged as in-house guests.',
+  sentiment_gauge:
+    'AI scores each message from -1 (negative) to +1 (positive); the gauge shows the average sentiment across all conversations.',
+}
+
+/** Small ⓘ icon with a hover tooltip explaining a metric's logic. */
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span
+      className="info-tip"
+      tabIndex={0}
+      role="img"
+      aria-label={text}
+      title={text}
+      style={{ display: 'inline-flex', verticalAlign: 'middle', marginLeft: 5, color: 'var(--fg-4)', cursor: 'help' }}
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="16" x2="12" y2="12" />
+        <line x1="12" y1="8" x2="12.01" y2="8" />
+      </svg>
+    </span>
+  )
+}
+
 function KPIRibbon({ metrics }: { metrics: PublicFieldValue[] }) {
   return (
     <div className="kpi-ribbon">
@@ -844,7 +888,10 @@ function KPIRibbon({ metrics }: { metrics: PublicFieldValue[] }) {
         const windowLabel = v.window_days ? `vs prev ${v.window_days}d` : v.sublabel || ''
         return (
           <div key={m.id} className={'kpi' + (i === 0 ? ' hero' : '')}>
-            <div className="kpi-label">{KPI_LABEL_OVERRIDES[m.id] || m.label}</div>
+            <div className="kpi-label">
+              {KPI_LABEL_OVERRIDES[m.id] || m.label}
+              {FIELD_INFO[m.id] && <InfoTip text={FIELD_INFO[m.id]} />}
+            </div>
             <div className="kpi-value num">
               {fmt(v.value)}
               {v.unit && <span className="unit">{v.unit}</span>}
@@ -1219,7 +1266,10 @@ function GaugeCard({
   return (
     <div className="pub-card">
       <div className="pub-card-head">
-        <span className="t">{field.label}</span>
+        <span className="t">
+          {field.label}
+          <InfoTip text={FIELD_INFO.sentiment_gauge} />
+        </span>
         <span className="sub">{isPct ? '0–100%' : '-1.0 → +1.0'}</span>
       </div>
       <div className="gauge">
@@ -2184,7 +2234,7 @@ function LoadingState({ style }: { style: AccentStyle }) {
         <div className="pub-loading-meta">
           <span className="mono">v2.4.0</span>
           <span className="sep">·</span>
-          <span>Powered by Convo AI</span>
+          <span>Powered by Next AI Lab</span>
         </div>
       </div>
     </div>
