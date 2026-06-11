@@ -724,10 +724,11 @@ def compute_field(field: dict, rows: list[ChatRow], ga4_snaps: list[GA4Snapshot]
     return fn(rows, field, ga4_snaps)
 
 
-# Production chats all arrive via WhatsApp; other Source values (APP/BUILDER/
-# VOICE) are test/dev traffic. Keep WhatsApp-only so the numbers reflect real
-# guest conversations (per the 6/9 review). Set _CHANNEL_KEEP = "" to disable.
-_CHANNEL_KEEP = "whatsapp"
+# Channel filter. The 6/9 review asked for WhatsApp-only, but that was based on
+# the mock data's channel mix — real conversations actually arrive tagged "APP"
+# (the bot platform's source), so filtering to WhatsApp throws away real data.
+# Disabled (""). Set to a substring (e.g. "whatsapp") to re-enable per need.
+_CHANNEL_KEEP = ""
 
 
 def _whatsapp_only(rows: list[ChatRow]) -> list[ChatRow]:
