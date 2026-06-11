@@ -380,7 +380,9 @@ export default function PublicDashboard({
     [
       ...renderableKpis.map((m) => m.id),
       ...KPI_HIDDEN_IDS,
-      heroLine?.id, heroGauge?.id,
+      // Only mark the line "consumed" when it actually renders (has points);
+      // otherwise it would vanish from the Custom-widgets fallback too.
+      heroLineHasData ? heroLine?.id : undefined, heroGauge?.id,
       revenueAed?.id, revenueUsd?.id, totalBookings?.id, totalChats?.id,
       escWeek?.id, escPos?.id, escNeu?.id, escNeg?.id,
       heroPie?.id, heroTagCloud?.id, heroMap?.id,
@@ -1488,7 +1490,7 @@ function IntentBreakdown({ field }: { field: PublicFieldValue }) {
                 width: `${(s.value / total) * 100}%`,
                 background: COLORS[i % COLORS.length],
               }}
-              title={`${s.label}: ${s.pct.toFixed(1)}%`}
+              title={`${s.label}: ${(s.pct ?? (s.value / total) * 100).toFixed(1)}%`}
             />
           ))}
         </div>
@@ -1497,7 +1499,7 @@ function IntentBreakdown({ field }: { field: PublicFieldValue }) {
             <div key={s.label} className="intent-row">
               <span className="intent-pip" style={{ background: COLORS[i % COLORS.length] }} />
               <span className="label">{s.label}</span>
-              <span className="pct">{s.pct.toFixed(1)}%</span>
+              <span className="pct">{(s.pct ?? (s.value / total) * 100).toFixed(1)}%</span>
               <span className="n">{s.value.toLocaleString()}</span>
             </div>
           ))}
@@ -1512,8 +1514,8 @@ function IntentBreakdown({ field }: { field: PublicFieldValue }) {
 // ─────────────────────────────────────────────────────────────────────
 function TopicsCard({ field }: { field: PublicFieldValue }) {
   const v = field.value as TagCloudValue
-  if (!v?.tags) return null
-  const max = Math.max(...v.tags.map((t) => t.weight))
+  if (!v?.tags || v.tags.length === 0) return null
+  const max = Math.max(...v.tags.map((t) => t.weight), 1)
   return (
     <div className="pub-card">
       <div className="pub-card-head">
@@ -1831,9 +1833,9 @@ function RankedCard({
   showPct?: boolean
 }) {
   const v = field.value as BarValue
-  if (!v?.bars) return null
+  if (!v?.bars || v.bars.length === 0) return null
   const total = v.bars.reduce((s, b) => s + b.value, 0) || 1
-  const max = Math.max(...v.bars.map((b) => b.value))
+  const max = Math.max(...v.bars.map((b) => b.value), 1)
   return (
     <div className="pub-card">
       <div className="pub-card-head">

@@ -337,7 +337,7 @@ function Editor({
       )}
       {tab === 'fields' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <AiWidgetBar dashboardId={dashboard.id} onAdd={(f) => setFieldConfig([...fieldConfig, f])} />
+          <AiWidgetBar dashboardId={dashboard.id} onAdd={(f) => setFieldConfig((prev) => [...prev, f])} />
           <FieldEditor fields={fieldConfig} onChange={setFieldConfig} />
         </div>
       )}
@@ -345,6 +345,7 @@ function Editor({
         <SortableLayoutTab
           layoutConfig={layoutConfig}
           setLayoutConfig={setLayoutConfig}
+          fieldConfig={fieldConfig}
           shareToken={dashboard.share_token}
           accent={accentStyle['--accent'] ?? ''}
           onReset={async () => {
@@ -722,8 +723,6 @@ function BlockLayoutTab({
     return <div className="info-card" style={{ padding: 24, color: 'var(--neg)' }}>Couldn’t load the dashboard preview.</div>
   }
 
-  // Use the editor's live (unsaved) layoutConfig so drag/resize/remove show
-  // immediately, not the saved copy from the fetched config.
   const cfg = { ...cfgQ.data, layout_config: layoutConfig }
   const blocks = buildMagazineBlocks(cfg, dataQ.data, accent)
   const blockMap = new Map<string, BlockLayout>((layoutConfig?.blocks ?? []).map((b) => [b.id, b]))
@@ -802,12 +801,14 @@ function BlockLayoutTab({
 function SortableLayoutTab({
   layoutConfig,
   setLayoutConfig,
+  fieldConfig,
   shareToken,
   accent,
   onReset,
 }: {
   layoutConfig: LayoutConfig | null
   setLayoutConfig: (c: LayoutConfig) => void
+  fieldConfig: FieldConfig[]
   shareToken: string
   accent: string
   onReset: () => void
@@ -822,7 +823,10 @@ function SortableLayoutTab({
     return <div className="info-card" style={{ padding: 24, color: 'var(--neg)' }}>Couldn’t load the dashboard preview.</div>
   }
 
-  const cfg = { ...cfgQ.data, layout_config: layoutConfig }
+  // Live (unsaved) field_config + layoutConfig so added widgets, Reset, and
+  // drag/resize/remove all show in the preview immediately — not the stale
+  // saved copy from the fetched config.
+  const cfg = { ...cfgQ.data, field_config: fieldConfig, layout_config: layoutConfig }
   const blocks = buildMagazineBlocks(cfg, dataQ.data, accent) // visible, in order
   const savedBlocks = layoutConfig?.blocks ?? []
   const hiddenBlocks = savedBlocks.filter((b) => b.hidden)
