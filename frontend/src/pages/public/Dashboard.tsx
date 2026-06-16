@@ -210,7 +210,7 @@ export function buildMagazineBlocks(
       revenueAed?.id, revenueUsd?.id, totalBookings?.id, totalChats?.id,
       escWeek?.id, escPos?.id, escNeu?.id, escNeg?.id,
       heroPie?.id, heroTagCloud?.id, heroMap?.id,
-      langBar?.id, countryBar?.id, heroTable?.id, faqTable?.id, channelBar?.id,
+      langBar?.id, countryBar?.id, heroTable?.id, channelBar?.id, // faqTable NOT consumed → own card
     ].filter((x): x is string => !!x),
   )
   // Custom widgets get row-packed onto the 12-col canvas below the magazine
@@ -719,11 +719,14 @@ export default function PublicDashboard({
           <DateRangeControls value={window_} onChange={setWindow} />
         </div>
 
-        {/* Magazine sections, rendered in the admin-configured order with
-            section + per-card visibility applied. Default = full magazine. */}
-        {orderedSections
-          .filter((s) => s.visible)
-          .map((s, i) => renderSection(s.id, s.hiddenCards ?? [], i + 1))}
+        {/* Free-canvas render — the SAME BlockGrid the admin Layout editor
+            uses, positioned from layout_config.blocks (falls back to the
+            default magazine arrangement). What the operator arranges is exactly
+            what the client sees. */}
+        <BlockGrid
+          mode="view"
+          blocks={buildMagazineBlocks(cfg, data, accentStyle['--accent'] ?? '')}
+        />
 
         {/* Footer */}
         <footer className="pub-footer">
