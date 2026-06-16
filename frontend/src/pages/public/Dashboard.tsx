@@ -835,9 +835,9 @@ function SectionHead({ num, title }: { num: number; title: string }) {
   // screens. The prop signature stays back-compat (callers can still
   // pass `sub` and it'll be ignored) so the chaptered layout doesn't
   // break.
+  void num // section numbers (§01/§02…) removed per user request
   return (
     <div className="sec-head">
-      <span className="sec-num">§{String(num).padStart(2, '0')}</span>
       <h2 className="sec-title">{title}</h2>
     </div>
   )
