@@ -857,7 +857,15 @@ function SortableLayoutTab({
   const onResize = (id: string, dims: { w?: number; h?: number }) => writeOrder(blocks.map((b) => b.id), [], { [id]: dims })
   const reAdd = (id: string) => writeOrder([...blocks.map((b) => b.id), id])
 
-  const addable = MAGAZINE_BLOCK_META.filter((m) => hiddenIds.has(m.id))
+  // Re-addable = every hidden block, whether a magazine card or a custom
+  // widget (look up the title from the magazine meta, else the field label).
+  const addable = hiddenBlocks.map((b) => ({
+    id: b.id,
+    title:
+      MAGAZINE_BLOCK_META.find((m) => m.id === b.id)?.title ??
+      fieldConfig.find((f) => f.id === b.id)?.label ??
+      b.id,
+  }))
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

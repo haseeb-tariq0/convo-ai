@@ -199,9 +199,37 @@ export function buildMagazineBlocks(
   if (countryBar) node['countries'] = <RankedCard field={countryBar} title="Countries" />
   if (heroTable) node['table'] = <RecentTable field={heroTable} />
 
+  // Custom widgets — any field NOT consumed by a curated card above (AI-added
+  // or template extras). Add them as their own blocks so the Layout editor can
+  // reorder / remove them too, matching the public "Custom widgets" section.
+  const consumed = new Set<string>(
+    [
+      ...renderableKpis.map((m) => m.id),
+      ...KPI_HIDDEN_IDS,
+      heroLineHasData ? heroLine?.id : undefined, heroGauge?.id,
+      revenueAed?.id, revenueUsd?.id, totalBookings?.id, totalChats?.id,
+      escWeek?.id, escPos?.id, escNeu?.id, escNeg?.id,
+      heroPie?.id, heroTagCloud?.id, heroMap?.id,
+      langBar?.id, countryBar?.id, heroTable?.id, faqTable?.id, channelBar?.id,
+    ].filter((x): x is string => !!x),
+  )
+  const customMetas: { id: string; title: string; layout: FieldLayout }[] = []
+  for (const f of data.fields) {
+    if (consumed.has(f.id)) continue
+    const v = f.value
+    if (v && typeof v === 'object' && 'error' in v) continue
+    node[f.id] =
+      f.type === 'big_number' ? <BigNumberCard field={f} />
+        : f.type === 'donut' ? <DonutCard field={f} />
+          : f.type === 'funnel' ? <FunnelCard field={f} />
+            : f.type === 'progress_bar' ? <ProgressBarCard field={f} />
+              : <FieldRenderer field={f} />
+    customMetas.push({ id: f.id, title: f.label, layout: { x: 0, y: 0, w: customSpan(String(f.type)), h: 0 } })
+  }
+  const allMetas = [...MAGAZINE_BLOCK_META, ...customMetas]
+
   // Order = saved block order first (skipping hidden / unavailable), then any
-  // remaining available cards in the default magazine reading order. `w` is
-  // the card's column span (12-col); height is auto (cards size to content).
+  // remaining available cards in reading order. `w` = column span; `h`=0 auto.
   const savedList = cfg.layout_config?.blocks ?? []
   const savedById = new Map(savedList.map((b) => [b.id, b]))
   const orderedIds: string[] = []
@@ -209,22 +237,37 @@ export function buildMagazineBlocks(
     if (b.hidden || !node[b.id]) continue
     orderedIds.push(b.id)
   }
-  for (const meta of MAGAZINE_BLOCK_META) {
+  for (const meta of allMetas) {
     if (savedById.has(meta.id) || !node[meta.id]) continue
     orderedIds.push(meta.id)
   }
   return orderedIds.map((id) => {
-    const meta = MAGAZINE_BLOCK_META.find((m) => m.id === id)!
+    const meta = allMetas.find((m) => m.id === id)!
     const s = savedById.get(id)
     return {
       id,
       title: meta.title,
-      // w = column span; h = fixed height in row units, or 0 = auto (sizes to
-      // content). Height is only fixed once the operator drags to resize it.
       layout: { x: 0, y: 0, w: s?.w ?? meta.layout.w, h: s?.h ?? 0 },
       node: node[id]!,
     }
   })
+}
+
+// Default column span for a custom (non-magazine) widget by type.
+function customSpan(type: string): number {
+  switch (type) {
+    case 'metric':
+    case 'big_number':
+      return 3
+    case 'line':
+    case 'tag_cloud':
+    case 'map':
+      return 8
+    case 'table':
+      return 12
+    default:
+      return 4
+  }
 }
 
 export default function PublicDashboard({
@@ -398,6 +441,9 @@ export default function PublicDashboard({
   // Live editor preview passes layoutOverride (unsaved edits); otherwise use
   // the saved layout_config; otherwise the full default magazine.
   const effectiveLayout = layoutOverride !== undefined ? layoutOverride : cfg.layout_config
+  // Custom widgets removed in the Layout editor are stored as hidden blocks;
+  // honor them so removal in the editor actually hides them here.
+  const hiddenBlockIds = new Set((effectiveLayout?.blocks ?? []).filter((b) => b.hidden).map((b) => b.id))
   const orderedSections =
     effectiveLayout?.sections && effectiveLayout.sections.length
       ? effectiveLayout.sections
@@ -501,6 +547,7 @@ export default function PublicDashboard({
         // broken card.
         const leftover = data.fields.filter((f) => {
           if (consumedIds.has(f.id)) return false
+          if (hiddenBlockIds.has(f.id)) return false // removed in the Layout editor
           const v = f.value
           return !(v && typeof v === 'object' && 'error' in v)
         })
