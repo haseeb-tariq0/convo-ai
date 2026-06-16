@@ -1317,6 +1317,13 @@ html[data-theme="dark"] .seg button.active {
 .pub-card-body { padding: 16px; }
 .pub-card-body.flush { padding: 0; }
 
+/* Inside the free-canvas grid, cards fill their fixed-height cell so content
+   (esp. the volume chart) stretches to fill instead of leaving a big gap. */
+.dash-grid .grid-content > .pub-card { height: 100%; display: flex; flex-direction: column; }
+.dash-grid .grid-content > .pub-card > .pub-card-body { flex: 1; min-height: 0; }
+.dash-grid .grid-content .volume-wrap { height: 100%; }
+.dash-grid .grid-content .chart-svg { height: 100%; }
+
 /* Volume chart */
 .volume-wrap { display: grid; grid-template-columns: 1fr 280px; gap: 16px; }
 .chart-svg { width: 100%; display: block; }
