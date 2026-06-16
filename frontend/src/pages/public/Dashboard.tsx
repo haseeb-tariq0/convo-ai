@@ -210,15 +210,10 @@ export function buildMagazineBlocks(
       revenueAed?.id, revenueUsd?.id, totalBookings?.id, totalChats?.id,
       escWeek?.id, escPos?.id, escNeu?.id, escNeg?.id,
       heroPie?.id, heroTagCloud?.id, heroMap?.id,
-      langBar?.id, countryBar?.id, heroTable?.id, channelBar?.id, // faqTable NOT consumed → own card
+      langBar?.id, countryBar?.id, heroTable?.id, faqTable?.id, channelBar?.id,
     ].filter((x): x is string => !!x),
   )
-  // Custom widgets get row-packed onto the 12-col canvas below the magazine
-  // cards, each with a default size by type (the operator can then drag/resize).
   const customMetas: { id: string; title: string; layout: FieldLayout }[] = []
-  let cx = 0
-  let cy = 43 // below the last magazine card (table sits ~y34..42)
-  let rowH = 0
   for (const f of data.fields) {
     if (consumed.has(f.id)) continue
     const v = f.value
@@ -229,15 +224,12 @@ export function buildMagazineBlocks(
           : f.type === 'funnel' ? <FunnelCard field={f} />
             : f.type === 'progress_bar' ? <ProgressBarCard field={f} />
               : <FieldRenderer field={f} />
-    const w = customSpan(String(f.type))
-    const h = customHeight(String(f.type))
-    if (cx + w > 12) { cx = 0; cy += rowH; rowH = 0 }
-    customMetas.push({ id: f.id, title: f.label, layout: { x: cx, y: cy, w, h } })
-    cx += w
-    rowH = Math.max(rowH, h)
+    customMetas.push({ id: f.id, title: f.label, layout: { x: 0, y: 0, w: customSpan(String(f.type)), h: 0 } })
   }
   const allMetas = [...MAGAZINE_BLOCK_META, ...customMetas]
 
+  // Order = saved block order first (skipping hidden / unavailable), then any
+  // remaining available cards in reading order. `w` = column span; `h`=0 auto.
   const savedList = cfg.layout_config?.blocks ?? []
   const savedById = new Map(savedList.map((b) => [b.id, b]))
   const orderedIds: string[] = []
@@ -252,11 +244,12 @@ export function buildMagazineBlocks(
   return orderedIds.map((id) => {
     const meta = allMetas.find((m) => m.id === id)!
     const s = savedById.get(id)
-    // Use the saved canvas position only when it carries a real height (the
-    // free-canvas era). Legacy sortable saves stored h=0 — fall back to meta.
-    const layout: FieldLayout =
-      s && s.h > 0 ? { x: s.x, y: s.y, w: s.w, h: s.h } : meta.layout
-    return { id, title: meta.title, layout, node: node[id]! }
+    return {
+      id,
+      title: meta.title,
+      layout: { x: 0, y: 0, w: s?.w ?? meta.layout.w, h: s?.h ?? 0 },
+      node: node[id]!,
+    }
   })
 }
 
@@ -274,23 +267,6 @@ function customSpan(type: string): number {
       return 12
     default:
       return 4
-  }
-}
-
-// Default height (in row units) for a custom widget on the free canvas.
-function customHeight(type: string): number {
-  switch (type) {
-    case 'metric':
-    case 'big_number':
-      return 3
-    case 'progress_bar':
-      return 2
-    case 'table':
-      return 6
-    case 'map':
-      return 8
-    default:
-      return 6 // gauge / pie / donut / bar / funnel / line / tag_cloud
   }
 }
 
@@ -719,14 +695,11 @@ export default function PublicDashboard({
           <DateRangeControls value={window_} onChange={setWindow} />
         </div>
 
-        {/* Free-canvas render — the SAME BlockGrid the admin Layout editor
-            uses, positioned from layout_config.blocks (falls back to the
-            default magazine arrangement). What the operator arranges is exactly
-            what the client sees. */}
-        <BlockGrid
-          mode="view"
-          blocks={buildMagazineBlocks(cfg, data, accentStyle['--accent'] ?? '')}
-        />
+        {/* Magazine sections, rendered in the admin-configured order with
+            section + per-card visibility applied. Default = full magazine. */}
+        {orderedSections
+          .filter((s) => s.visible)
+          .map((s, i) => renderSection(s.id, s.hiddenCards ?? [], i + 1))}
 
         {/* Footer */}
         <footer className="pub-footer">
@@ -1150,7 +1123,10 @@ function VolumeChart({ field }: { field: PublicFieldValue }) {
   const prevTotal = prevPoints
     ? prevPoints.reduce((s, p) => s + p.y, 0)
     : null
-  const avg = Math.round(total / ys.length)
+  // Average per day. Round to a whole number when ≥ 10, else keep 1 decimal so
+  // a sparse dataset (e.g. 20 chats over 60+ days) doesn't display a flat "0".
+  const avgRaw = ys.length ? total / ys.length : 0
+  const avg = avgRaw >= 10 ? Math.round(avgRaw) : Math.round(avgRaw * 10) / 10
   const peakValue = points[peakIdx].y
   const periodDelta =
     prevTotal != null && prevTotal !== 0
@@ -1949,6 +1925,7 @@ function RecentTable({ field }: { field: PublicFieldValue }) {
         <span className="t">{field.label}</span>
         <span className="sub">{v.rows.length} rows · newest first</span>
       </div>
+      <div style={{ overflowX: 'auto', width: '100%' }}>
       <table className="pub-table">
         <thead>
           <tr>
@@ -1996,16 +1973,18 @@ function RecentTable({ field }: { field: PublicFieldValue }) {
                     </td>
                   )
                 }
-                if (c === 'Message' && typeof raw === 'string') {
+                if ((c === 'Message' || c === 'Content' || c === 'content' || c === 'message') && typeof raw === 'string') {
                   const isArabic = ARABIC_RE.test(raw)
                   return (
                     <td
                       key={c}
-                      style={
-                        isArabic
-                          ? { direction: 'rtl', textAlign: 'right', maxWidth: 520 }
-                          : { maxWidth: 520 }
-                      }
+                      style={{
+                        maxWidth: 520,
+                        whiteSpace: 'normal',
+                        wordBreak: 'break-word',
+                        overflowWrap: 'anywhere',
+                        ...(isArabic ? { direction: 'rtl', textAlign: 'right' } : {}),
+                      }}
                     >
                       <span className="guest">{raw}</span>
                     </td>
@@ -2038,6 +2017,7 @@ function RecentTable({ field }: { field: PublicFieldValue }) {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }

@@ -54,27 +54,6 @@
       "source": "avg_messages_per_chat"
     },
     {
-      "id": "chats_today",
-      "type": "metric",
-      "label": "Chats — today",
-      "source": "chat_sessions",
-      "window_days": 1
-    },
-    {
-      "id": "chats_week",
-      "type": "metric",
-      "label": "Chats — last 7 days",
-      "source": "chat_sessions",
-      "window_days": 7
-    },
-    {
-      "id": "chats_month",
-      "type": "metric",
-      "label": "Chats — last 30 days",
-      "source": "chat_sessions",
-      "window_days": 30
-    },
-    {
       "id": "escalations_week",
       "type": "metric",
       "label": "Human escalations — 7d",
@@ -175,31 +154,10 @@
       "source": "in_house_guests"
     },
     {
-      "id": "booking_links_shared",
-      "type": "metric",
-      "label": "Booking links shared",
-      "source": "booking_links_shared"
-    },
-    {
       "id": "languages_bar",
       "type": "bar",
       "label": "Languages",
       "source": "language"
-    },
-    {
-      "id": "ai_country_map_62fb5d",
-      "type": "map",
-      "label": "Guest countries",
-      "source": "phone_country"
-    },
-    {
-      "id": "ai_keyword_count_6e20f8",
-      "type": "metric",
-      "label": "Messages mentioning 'refund'",
-      "source": "keyword_count",
-      "keywords": [
-        "refund"
-      ]
     }
   ],
   "sheet_column_map": {
