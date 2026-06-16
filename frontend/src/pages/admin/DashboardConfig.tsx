@@ -832,30 +832,37 @@ function SortableLayoutTab({
   const hiddenBlocks = savedBlocks.filter((b) => b.hidden)
   const hiddenIds = new Set(hiddenBlocks.map((b) => b.id))
 
-  const wOf = (id: string) =>
-    blocks.find((b) => b.id === id)?.layout.w ??
-    savedBlocks.find((b) => b.id === id)?.w ??
-    MAGAZINE_BLOCK_META.find((m) => m.id === id)?.layout.w ?? 4
-  const hOf = (id: string) =>
-    blocks.find((b) => b.id === id)?.layout.h ?? savedBlocks.find((b) => b.id === id)?.h ?? 0
-
-  function writeOrder(
-    visibleIds: string[],
-    extraHidden: string[] = [],
-    override: Record<string, { w?: number; h?: number }> = {},
-  ) {
-    const hidden = [...new Set([...hiddenBlocks.map((b) => b.id), ...extraHidden])].filter((id) => !visibleIds.includes(id))
-    const next: BlockLayout[] = [
-      ...visibleIds.map((id) => ({ id, x: 0, y: 0, w: override[id]?.w ?? wOf(id), h: override[id]?.h ?? hOf(id), hidden: false })),
-      ...hidden.map((id) => ({ id, x: 0, y: 0, w: wOf(id), h: hOf(id), hidden: true })),
-    ]
+  const persist = (next: BlockLayout[]) =>
     setLayoutConfig({ sections: layoutConfig?.sections ?? [], blocks: next })
+
+  // BlockGrid hands back the full resolved x/y/w/h for every visible block.
+  function onLayoutChange(layouts: Record<string, FieldLayout>) {
+    const visibleIds = new Set(Object.keys(layouts))
+    const visible: BlockLayout[] = Object.entries(layouts).map(([id, l]) => ({
+      id, x: l.x, y: l.y, w: l.w, h: l.h, hidden: false,
+    }))
+    const keptHidden = hiddenBlocks.filter((b) => !visibleIds.has(b.id))
+    persist([...visible, ...keptHidden])
   }
 
-  const onReorder = (orderedIds: string[]) => writeOrder(orderedIds)
-  const onRemove = (id: string) => writeOrder(blocks.filter((b) => b.id !== id).map((b) => b.id), [id])
-  const onResize = (id: string, dims: { w?: number; h?: number }) => writeOrder(blocks.map((b) => b.id), [], { [id]: dims })
-  const reAdd = (id: string) => writeOrder([...blocks.map((b) => b.id), id])
+  function onRemove(ids: string[]) {
+    const drop = new Set(ids)
+    const remaining: BlockLayout[] = blocks
+      .filter((b) => !drop.has(b.id))
+      .map((b) => ({ id: b.id, x: b.layout.x, y: b.layout.y, w: b.layout.w, h: b.layout.h, hidden: false }))
+    const removed: BlockLayout[] = ids.map((id) => {
+      const l = blocks.find((b) => b.id === id)?.layout ?? { x: 0, y: 0, w: 4, h: 4 }
+      return { id, x: l.x, y: l.y, w: l.w, h: l.h, hidden: true }
+    })
+    const keptHidden = hiddenBlocks.filter((b) => !drop.has(b.id))
+    persist([...remaining, ...removed, ...keptHidden])
+  }
+
+  function reAdd(id: string) {
+    const existing = savedBlocks.find((b) => b.id === id)
+    const others = savedBlocks.filter((b) => b.id !== id).map((b) => ({ ...b }))
+    persist([...others, existing ? { ...existing, hidden: false } : { id, x: 0, y: 999, w: 4, h: 4, hidden: false }])
+  }
 
   // Re-addable = every hidden block, whether a magazine card or a custom
   // widget (look up the title from the magazine meta, else the field label).
@@ -871,7 +878,7 @@ function SortableLayoutTab({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div className="info-card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <span className="t">Layout</span>
-        <span className="sub">Drag a card to reposition · ✕ to remove · Save changes to publish</span>
+        <span className="sub">Free canvas — drag to place anywhere · drag edges/corner to resize · ✕ to remove · Save changes to publish</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           {addable.length > 0 && (
             <>
@@ -889,7 +896,7 @@ function SortableLayoutTab({
         </div>
       </div>
       <div className="pub-root" style={{ padding: 16, background: 'var(--bg)', borderRadius: 'var(--d-radius-lg)', border: '1px solid var(--line)' }}>
-        <SortableMagazine blocks={blocks} edit onReorder={onReorder} onRemove={onRemove} onResize={onResize} />
+        <BlockGrid mode="edit" blocks={blocks} onLayoutChange={onLayoutChange} onRemove={onRemove} />
       </div>
     </div>
   )

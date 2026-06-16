@@ -213,7 +213,12 @@ export function buildMagazineBlocks(
       langBar?.id, countryBar?.id, heroTable?.id, faqTable?.id, channelBar?.id,
     ].filter((x): x is string => !!x),
   )
+  // Custom widgets get row-packed onto the 12-col canvas below the magazine
+  // cards, each with a default size by type (the operator can then drag/resize).
   const customMetas: { id: string; title: string; layout: FieldLayout }[] = []
+  let cx = 0
+  let cy = 43 // below the last magazine card (table sits ~y34..42)
+  let rowH = 0
   for (const f of data.fields) {
     if (consumed.has(f.id)) continue
     const v = f.value
@@ -224,12 +229,15 @@ export function buildMagazineBlocks(
           : f.type === 'funnel' ? <FunnelCard field={f} />
             : f.type === 'progress_bar' ? <ProgressBarCard field={f} />
               : <FieldRenderer field={f} />
-    customMetas.push({ id: f.id, title: f.label, layout: { x: 0, y: 0, w: customSpan(String(f.type)), h: 0 } })
+    const w = customSpan(String(f.type))
+    const h = customHeight(String(f.type))
+    if (cx + w > 12) { cx = 0; cy += rowH; rowH = 0 }
+    customMetas.push({ id: f.id, title: f.label, layout: { x: cx, y: cy, w, h } })
+    cx += w
+    rowH = Math.max(rowH, h)
   }
   const allMetas = [...MAGAZINE_BLOCK_META, ...customMetas]
 
-  // Order = saved block order first (skipping hidden / unavailable), then any
-  // remaining available cards in reading order. `w` = column span; `h`=0 auto.
   const savedList = cfg.layout_config?.blocks ?? []
   const savedById = new Map(savedList.map((b) => [b.id, b]))
   const orderedIds: string[] = []
@@ -244,12 +252,11 @@ export function buildMagazineBlocks(
   return orderedIds.map((id) => {
     const meta = allMetas.find((m) => m.id === id)!
     const s = savedById.get(id)
-    return {
-      id,
-      title: meta.title,
-      layout: { x: 0, y: 0, w: s?.w ?? meta.layout.w, h: s?.h ?? 0 },
-      node: node[id]!,
-    }
+    // Use the saved canvas position only when it carries a real height (the
+    // free-canvas era). Legacy sortable saves stored h=0 — fall back to meta.
+    const layout: FieldLayout =
+      s && s.h > 0 ? { x: s.x, y: s.y, w: s.w, h: s.h } : meta.layout
+    return { id, title: meta.title, layout, node: node[id]! }
   })
 }
 
@@ -267,6 +274,23 @@ function customSpan(type: string): number {
       return 12
     default:
       return 4
+  }
+}
+
+// Default height (in row units) for a custom widget on the free canvas.
+function customHeight(type: string): number {
+  switch (type) {
+    case 'metric':
+    case 'big_number':
+      return 3
+    case 'progress_bar':
+      return 2
+    case 'table':
+      return 6
+    case 'map':
+      return 8
+    default:
+      return 6 // gauge / pie / donut / bar / funnel / line / tag_cloud
   }
 }
 
