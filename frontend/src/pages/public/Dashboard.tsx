@@ -581,21 +581,13 @@ export default function PublicDashboard({
         <div className="topbar-inner">
           <div className="brand-mark">
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontWeight: 600 }}>
-              {/* Convo AI nest logomark — the "V" shape on a brand-ink square,
-                  matching the Claude Design bundle. Stroke goes back to the bg
-                  color so the mark works in both light + dark themes. */}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <rect x="1" y="1" width="14" height="14" rx="3" fill="var(--d-fg)" />
-                <path
-                  d="M5 11 V5 L11 11 V5"
-                  stroke="var(--bg)"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  fill="none"
-                />
-              </svg>
-              Convo AI
+              {/* Nexa AI Lab wordmark — purple reads on both light + dark
+                  topbars. Source PNG is alpha-trimmed (see public/nexa-logo.png). */}
+              <img
+                src="/nexa-logo.png"
+                alt="Nexa AI Lab"
+                style={{ height: 20, width: 'auto', display: 'block' }}
+              />
             </span>
             <span className="crumb-sep">/</span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
