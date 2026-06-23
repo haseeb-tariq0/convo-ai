@@ -591,7 +591,6 @@ export default function PublicDashboard({
             </span>
             <span className="crumb-sep">/</span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <BrandLogo brand={brand} size="sm" />
               <span className="crumb-cur">{brandTitle}</span>
             </span>
           </div>
@@ -701,7 +700,7 @@ export default function PublicDashboard({
             <span className="mono">00:{String(remainingSec).padStart(2, '0')}</span>
           </div>
           <div>
-            Powered by <span className="footer-brand">Next AI Lab</span> · Nexa Digital
+            Powered by <span className="footer-brand">NEXA AI Lab</span> · Nexa Digital
             <span style={{ color: 'var(--fg-5)', margin: '0 10px' }}>·</span>
             <span className="mono">v2.4.0</span>
           </div>
@@ -2304,7 +2303,7 @@ function LoadingState({ style }: { style: AccentStyle }) {
         <div className="pub-loading-meta">
           <span className="mono">v2.4.0</span>
           <span className="sep">·</span>
-          <span>Powered by Next AI Lab</span>
+          <span>Powered by NEXA AI Lab</span>
         </div>
       </div>
     </div>
