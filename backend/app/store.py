@@ -422,6 +422,15 @@ class _InMemoryStore:
         with self._lock:
             return [r for r in self._chat_rows.values() if r.dashboard_id == dashboard_id]
 
+    def max_chat_row_index(self, dashboard_id: str) -> int:
+        with self._lock:
+            idxs = [
+                r.source_row_index
+                for r in self._chat_rows.values()
+                if r.dashboard_id == dashboard_id
+            ]
+            return max(idxs) if idxs else -1
+
     def upsert_chat_row(self, row: ChatRow) -> ChatRow:
         with self._lock:
             for existing in self._chat_rows.values():
@@ -860,6 +869,21 @@ class _SupabaseStore:
                 break
             offset += page_size
         return out
+
+    def max_chat_row_index(self, dashboard_id: str) -> int:
+        """Highest source_row_index stored for a dashboard, or -1 if none.
+        Fetches a single row (not the whole table) so the sheets sync can
+        resume from the tail without loading every row into memory."""
+        res = (
+            self._table("chat_rows")
+            .select("source_row_index")
+            .eq("dashboard_id", dashboard_id)
+            .order("source_row_index", desc=True)
+            .limit(1)
+            .execute()
+        )
+        data = res.data or []
+        return int(data[0]["source_row_index"]) if data else -1
 
     def upsert_chat_row(self, row: ChatRow) -> ChatRow:
         # Postgres unique (dashboard_id, source_row_index) handles dedup —
@@ -1391,6 +1415,16 @@ class _SQLAlchemyStore:
             )
             res = session.execute(stmt).scalars().all()
             return [_to_dataclass(ChatRow, r) for r in res]
+
+    def max_chat_row_index(self, dashboard_id: str) -> int:
+        with self._session() as session:
+            from sqlalchemy import func
+
+            stmt = select(func.max(models.ChatRow.source_row_index)).where(
+                models.ChatRow.dashboard_id == dashboard_id
+            )
+            val = session.execute(stmt).scalar()
+            return int(val) if val is not None else -1
 
     def upsert_chat_row(self, row: ChatRow) -> ChatRow:
         with self._session() as session:

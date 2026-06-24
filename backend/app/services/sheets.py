@@ -208,12 +208,16 @@ def _col_letter_to_index(letter: str) -> int:
     return n - 1
 
 
-def _real_fetch(dashboard) -> tuple[list[str], list[dict]]:
-    """Pull all rows from the dashboard's Sheet. Returns
-    ``(headers, rows)`` where rows are dicts keyed by header names per
-    SPEC §6. The headers list (positional, including any blank columns)
-    is returned alongside so callers can resolve the column map's
-    semantic names ("timestamp" → "A" → headers[0])."""
+def _real_fetch(dashboard, start_index: int = 0) -> tuple[list[str], list[dict]]:
+    """Pull rows from the dashboard's Sheet, starting at DATA row
+    ``start_index`` (0-based, *after* the header). ``start_index=0`` reads
+    the whole sheet; a higher value reads only the new tail — this is what
+    makes the sync incremental, so we don't re-load all ~9k rows every tick.
+
+    Returns ``(headers, rows)`` where rows are dicts keyed by header names
+    per SPEC §6. The headers (row 1) are fetched separately and cheaply so
+    callers can still resolve the column map's semantic names
+    ("timestamp" → "A" → headers[0])."""
     from googleapiclient.errors import HttpError
 
     if not dashboard.sheet_id:
@@ -222,12 +226,26 @@ def _real_fetch(dashboard) -> tuple[list[str], list[dict]]:
     tab = dashboard.sheet_tab_name or "Sheet1"
     # Quote the tab name — handles spaces ("Chat Logs") and apostrophes.
     safe_tab = "'" + tab.replace("'", "''") + "'"
-    range_a1 = f"{safe_tab}!A:ZZ"
+    # Data index i lives at sheet row i+2 (row 1 is the header), so the tail
+    # starting at `start_index` begins at sheet row start_index+2.
+    first_data_row = max(0, start_index) + 2
     try:
-        result = (
+        # Header row (tiny — one row) and the data tail in two reads.
+        head_res = (
             service.spreadsheets()
             .values()
-            .get(spreadsheetId=dashboard.sheet_id, range=range_a1)
+            .get(spreadsheetId=dashboard.sheet_id, range=f"{safe_tab}!1:1")
+            .execute()
+        )
+        head_vals = head_res.get("values", [])
+        if not head_vals:
+            return [], []
+        headers = [h.strip() for h in head_vals[0]]
+
+        data_res = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=dashboard.sheet_id, range=f"{safe_tab}!A{first_data_row}:ZZ")
             .execute()
         )
     except HttpError as e:
@@ -236,12 +254,9 @@ def _real_fetch(dashboard) -> tuple[list[str], list[dict]]:
         # sheet_id; 400 = bad range/tab name).
         raise RuntimeError(f"Sheets API {e.resp.status}: {e._get_reason()}") from e
 
-    values: list[list[str]] = result.get("values", [])
-    if len(values) < 2:
-        return [], []
-    headers = [h.strip() for h in values[0]]
+    values: list[list[str]] = data_res.get("values", [])
     rows: list[dict] = []
-    for raw_row in values[1:]:
+    for raw_row in values:
         # Pad short rows so every dict has every header key — cells past the
         # last non-empty one come back missing from the API.
         padded = list(raw_row) + [""] * (len(headers) - len(raw_row))
@@ -265,8 +280,10 @@ def _timestamp_header(column_map: dict[str, str], headers: list[str]) -> str | N
 
 
 def sync_all_dashboards() -> None:
-    """Scheduler tick — runs every 30s. Adds one mock row per dashboard
-    when in mock mode; calls the real fetcher otherwise."""
+    """Scheduler tick. Adds one mock row per dashboard when in mock mode;
+    otherwise pulls only the NEW rows from each Sheet (incremental — resumes
+    from the highest source_row_index already stored) so we never re-load the
+    whole sheet into memory every tick."""
     settings = get_settings()
     start = time.monotonic()
     total_new = 0
@@ -277,28 +294,32 @@ def sync_all_dashboards() -> None:
             if settings.use_mock_sheets:
                 # Mock mode: append one new row per tick so the dashboard
                 # demonstrably grows during a live demo.
-                existing = store.chat_rows_for_dashboard(d.id)
-                next_index = max((r.source_row_index for r in existing), default=0) + 1
+                next_index = store.max_chat_row_index(d.id) + 1
                 row = _synth_row_for_dashboard(d.id, next_index)
                 store.upsert_chat_row(row)
                 total_new += 1
             else:
-                headers, rows = _real_fetch(d)
-                ts_header = _timestamp_header(d.sheet_column_map, headers)
-                # Bulk path — store.bulk_upsert_chat_rows chunks the Supabase
-                # calls. Single-row upserts at ~150ms each are too slow for
-                # sheets in the thousands.
-                batch = [
-                    ChatRow(
-                        dashboard_id=d.id,
-                        source_row_index=i,
-                        raw=raw,
-                        occurred_at=_parse_timestamp(raw, ts_header),
-                    )
-                    for i, raw in enumerate(rows)
-                ]
-                store.bulk_upsert_chat_rows(batch)
-                total_new += len(batch)
+                # Resume from the row after the last one we stored — fetch and
+                # upsert only the tail, not all ~9k rows. Idempotent on
+                # (dashboard_id, source_row_index), so a re-run is harmless.
+                start_index = store.max_chat_row_index(d.id) + 1
+                headers, rows = _real_fetch(d, start_index)
+                if rows:
+                    ts_header = _timestamp_header(d.sheet_column_map, headers)
+                    # Bulk path — store.bulk_upsert_chat_rows chunks the
+                    # Supabase calls. Single-row upserts at ~150ms each are too
+                    # slow for the first full sync of a large sheet.
+                    batch = [
+                        ChatRow(
+                            dashboard_id=d.id,
+                            source_row_index=start_index + i,
+                            raw=raw,
+                            occurred_at=_parse_timestamp(raw, ts_header),
+                        )
+                        for i, raw in enumerate(rows)
+                    ]
+                    store.bulk_upsert_chat_rows(batch)
+                    total_new += len(batch)
             store.log_sync(
                 dashboard_id=d.id,
                 source="sheets",
