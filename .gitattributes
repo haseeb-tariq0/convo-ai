@@ -1,0 +1,18 @@
+# Treat binary assets as binary — never apply line-ending (CRLF/LF)
+# conversion, which would corrupt them. autocrlf=true otherwise mangles
+# these files on checkout/clone.
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.woff  binary
+*.woff2 binary
+*.ttf  binary
+*.otf  binary
+*.eot  binary
+*.mp4  binary
+*.mov  binary
+*.zip  binary
