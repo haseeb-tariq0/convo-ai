@@ -27,7 +27,10 @@ get_settings.cache_clear()
 def _reset_store():
     """Wipe the in-memory store before every test."""
     from app import store as store_module
+    from app.services import aggregations
 
     store_module.store.reset()
+    aggregations.clear_aggregation_cache()
     yield
     store_module.store.reset()
+    aggregations.clear_aggregation_cache()

@@ -431,6 +431,19 @@ class _InMemoryStore:
             ]
             return max(idxs) if idxs else -1
 
+    def count_chat_rows(self, dashboard_id: str) -> int:
+        with self._lock:
+            return sum(1 for r in self._chat_rows.values() if r.dashboard_id == dashboard_id)
+
+    def latest_occurred_at(self, dashboard_id: str):
+        with self._lock:
+            times = [
+                r.occurred_at
+                for r in self._chat_rows.values()
+                if r.dashboard_id == dashboard_id and r.occurred_at
+            ]
+            return max(times) if times else None
+
     def upsert_chat_row(self, row: ChatRow) -> ChatRow:
         with self._lock:
             for existing in self._chat_rows.values():
@@ -884,6 +897,41 @@ class _SupabaseStore:
         )
         data = res.data or []
         return int(data[0]["source_row_index"]) if data else -1
+
+    def count_chat_rows(self, dashboard_id: str) -> int:
+        """Row count via PostgREST's exact count header — no rows transferred."""
+        res = (
+            self._table("chat_rows")
+            .select("id", count="exact", head=True)
+            .eq("dashboard_id", dashboard_id)
+            .execute()
+        )
+        return res.count or 0
+
+    def latest_occurred_at(self, dashboard_id: str):
+        """Most recent occurred_at for a dashboard (single-row query) — used for
+        the 'last updated' badge without loading every row."""
+        res = (
+            self._table("chat_rows")
+            .select("occurred_at")
+            .eq("dashboard_id", dashboard_id)
+            .not_.is_("occurred_at", "null")
+            .order("occurred_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        data = res.data or []
+        if not data:
+            return None
+        val = data[0].get("occurred_at")
+        if isinstance(val, str):
+            from datetime import datetime
+
+            try:
+                return datetime.fromisoformat(val.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        return val
 
     def upsert_chat_row(self, row: ChatRow) -> ChatRow:
         # Postgres unique (dashboard_id, source_row_index) handles dedup —
@@ -1425,6 +1473,24 @@ class _SQLAlchemyStore:
             )
             val = session.execute(stmt).scalar()
             return int(val) if val is not None else -1
+
+    def count_chat_rows(self, dashboard_id: str) -> int:
+        with self._session() as session:
+            from sqlalchemy import func
+
+            stmt = select(func.count()).select_from(models.ChatRow).where(
+                models.ChatRow.dashboard_id == dashboard_id
+            )
+            return session.execute(stmt).scalar() or 0
+
+    def latest_occurred_at(self, dashboard_id: str):
+        with self._session() as session:
+            from sqlalchemy import func
+
+            stmt = select(func.max(models.ChatRow.occurred_at)).where(
+                models.ChatRow.dashboard_id == dashboard_id
+            )
+            return session.execute(stmt).scalar()
 
     def upsert_chat_row(self, row: ChatRow) -> ChatRow:
         with self._session() as session:

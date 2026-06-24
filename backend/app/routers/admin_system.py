@@ -44,7 +44,9 @@ def get_system() -> SystemInfo:
     for c in store.list_clients(include_inactive=True):
         for d in store.list_dashboards_for_client(c.id):
             dashboards_n += 1
-            chat_rows_n += len(store.chat_rows_for_dashboard(d.id))
+            # COUNT query, not a full row load — this endpoint otherwise pulled
+            # every chat row of every dashboard into memory just to size them.
+            chat_rows_n += store.count_chat_rows(d.id)
     ga4_n = len(store.list_ga4_integrations())
     try:
         ai_n = len(store.list_ai_integrations())

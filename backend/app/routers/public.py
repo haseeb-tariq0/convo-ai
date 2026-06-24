@@ -21,11 +21,10 @@ router = APIRouter(prefix="/api/public/dashboard", tags=["public"])
 
 
 def _last_updated_for(dashboard_id: str) -> datetime | None:
-    rows = store.chat_rows_for_dashboard(dashboard_id)
-    if not rows:
-        return None
-    times = [r.occurred_at for r in rows if r.occurred_at]
-    return max(times) if times else None
+    # Single-row query for the max timestamp — NOT a full table load. This runs
+    # on every public dashboard view, so loading all ~9k rows here was a major
+    # source of memory pressure.
+    return store.latest_occurred_at(dashboard_id)
 
 
 @router.get("/{share_token}", response_model=PublicDashboardConfig)

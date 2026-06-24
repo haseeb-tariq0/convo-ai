@@ -13,6 +13,8 @@ instead of crashing" rule.
 from __future__ import annotations
 
 import re
+import threading
+import time
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -743,7 +745,70 @@ def _whatsapp_only(rows: list[ChatRow]) -> list[ChatRow]:
     return kept if kept else rows
 
 
+# ── Result cache ───────────────────────────────────────────────────────────
+# compute_dashboard_data loads ALL of a dashboard's rows and aggregates them.
+# A public dashboard open in a browser (or several) re-hits /data repeatedly;
+# without a cache, every hit independently loads ~9k rows + recomputes, and the
+# concurrent copies are what pushed the backend past Render's memory limit.
+# A short TTL means at most one compute per dashboard+window per _CACHE_TTL
+# seconds, and a per-key lock collapses a burst of concurrent requests into a
+# single compute (no thundering herd). Data is at most _CACHE_TTL seconds stale
+# — fine, since the on-screen refresh indicator is already a ~30s cosmetic.
+_CACHE_TTL = 45.0  # seconds
+_CACHE_MAX = 200   # hard cap on distinct keys, to bound memory
+_cache: dict[tuple, tuple[float, dict]] = {}
+_cache_guard = threading.Lock()          # guards _cache + _key_locks
+_key_locks: dict[tuple, threading.Lock] = {}
+
+
+def clear_aggregation_cache() -> None:
+    """Drop all cached results. Called by the test fixture on store reset, and
+    available if a forced refresh is ever needed."""
+    with _cache_guard:
+        _cache.clear()
+        _key_locks.clear()
+
+
 def compute_dashboard_data(
+    dashboard_id: str,
+    range_days: int | None = None,
+    *,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> dict:
+    """Cached wrapper around the aggregation. See _compute_dashboard_data_uncached
+    for the actual computation; this layer just memoizes the result for
+    _CACHE_TTL seconds to keep memory and CPU bounded under repeated/concurrent
+    dashboard views."""
+    key = (dashboard_id, range_days, from_date, to_date)
+    now = time.monotonic()
+    with _cache_guard:
+        hit = _cache.get(key)
+        if hit and now - hit[0] < _CACHE_TTL:
+            return hit[1]
+        klock = _key_locks.setdefault(key, threading.Lock())
+
+    # Only one thread computes a given key at a time; the rest wait here and
+    # then read the value the winner just cached.
+    with klock:
+        now = time.monotonic()
+        with _cache_guard:
+            hit = _cache.get(key)
+            if hit and now - hit[0] < _CACHE_TTL:
+                return hit[1]
+        result = _compute_dashboard_data_uncached(
+            dashboard_id, range_days, from_date=from_date, to_date=to_date
+        )
+        with _cache_guard:
+            if len(_cache) >= _CACHE_MAX:
+                _cache.clear()
+                _key_locks.clear()
+                klock = _key_locks.setdefault(key, klock)
+            _cache[key] = (time.monotonic(), result)
+        return result
+
+
+def _compute_dashboard_data_uncached(
     dashboard_id: str,
     range_days: int | None = None,
     *,
