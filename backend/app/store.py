@@ -949,6 +949,34 @@ class _SupabaseStore:
         ).execute()
         return res.data or {}
 
+    def rollup_aggregates(self, dashboard_id: str, from_day=None, to_day=None) -> dict:
+        """Phase-2 reader: assemble the dashboard aggregates from the precomputed
+        rollup tables (session_rollup + daily_rollup) for a day-bounded window —
+        reads ~hundreds of summary rows instead of scanning raw chat_rows, so the
+        first/cold load is sub-second even for huge clients. See docs/SCALING.md."""
+        res = self._sb.rpc("convo_rollup_aggregates", {
+            "p_dashboard_id": dashboard_id,
+            "p_from_day": from_day.isoformat() if from_day else None,
+            "p_to_day": to_day.isoformat() if to_day else None,
+        }).execute()
+        return res.data or {}
+
+    def build_rollups(self, dashboard_id: str) -> None:
+        """Rebuild the rollup tables for a dashboard from chat_rows (one-time
+        backfill / full refresh). Pure SQL — the flags are already on chat_rows."""
+        self._sb.rpc("convo_build_rollups", {"p_dashboard_id": dashboard_id}).execute()
+
+    def refresh_rollups(self, dashboard_id: str, session_ids: list[str], days: list[str]) -> None:
+        """Incrementally rebuild the rollups for the touched sessions + days only
+        (called by the sync after new rows land). Cheap targeted refresh."""
+        if not session_ids and not days:
+            return
+        self._sb.rpc("convo_refresh_rollups", {
+            "p_dashboard_id": dashboard_id,
+            "p_session_ids": list(session_ids),
+            "p_days": list(days),
+        }).execute()
+
     def field_breakdown(self, dashboard_id: str, field: str, from_dt=None, to_dt=None) -> list[dict]:
         """Row counts per value of a raw field (role/language/channel/country) —
         for the pie/bar widgets, via SQL group-by (no row load)."""

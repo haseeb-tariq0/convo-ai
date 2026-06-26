@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # chat_row into Python. Fixes the memory/OOM problem at scale. See
     # docs/SCALING.md. Off by default until verified per-deployment.
     use_sql_aggregation: bool = False
+    # Phase 2: read from precomputed rollup tables (sub-second cold load even on
+    # huge clients). Implies the SQL path. Off until verified per-deployment.
+    use_rollup_aggregation: bool = False
 
     # Symmetric encryption key for at-rest secrets (per-client AI keys,
     # GA4 credentials when that path lands). Base64-encoded 32-byte

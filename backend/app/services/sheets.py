@@ -298,6 +298,20 @@ def _refresh_session_flags(dashboard_id: str, batch: list) -> None:
         log.exception("session-flag refresh failed for dashboard %s", dashboard_id)
 
 
+def _refresh_rollups(dashboard_id: str, batch: list) -> None:
+    """After the flags are refreshed, rebuild the rollup tables for the touched
+    sessions + days so the fast (rollup) read path stays current. Must run AFTER
+    _refresh_session_flags (rollups read the flag columns). Best-effort."""
+    if not getattr(store, "refresh_rollups", None):
+        return  # store backend without rollup support (e.g. in-memory tests)
+    try:
+        sids = {r.raw.get("Session ID") for r in batch if r.raw.get("Session ID")}
+        days = {r.occurred_at.date().isoformat() for r in batch if r.occurred_at}
+        store.refresh_rollups(dashboard_id, list(sids), list(days))
+    except Exception:  # noqa: BLE001
+        log.exception("rollup refresh failed for dashboard %s", dashboard_id)
+
+
 def sync_all_dashboards() -> None:
     """Scheduler tick. Adds one mock row per dashboard when in mock mode;
     otherwise pulls only the NEW rows from each Sheet (incremental — resumes
@@ -340,6 +354,7 @@ def sync_all_dashboards() -> None:
                     store.bulk_upsert_chat_rows(batch)
                     total_new += len(batch)
                     _refresh_session_flags(d.id, batch)
+                    _refresh_rollups(d.id, batch)
             store.log_sync(
                 dashboard_id=d.id,
                 source="sheets",

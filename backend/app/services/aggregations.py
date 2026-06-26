@@ -800,7 +800,12 @@ def compute_dashboard_data(
         # (the Supabase backend); otherwise the in-Python path. Gated so we can
         # flip per-deployment after verifying.
         from ..config import get_settings
-        if get_settings().use_sql_aggregation and hasattr(store, "core_aggregates"):
+        _s = get_settings()
+        if _s.use_rollup_aggregation and hasattr(store, "rollup_aggregates"):
+            result = compute_dashboard_data_sql(
+                dashboard_id, range_days, from_date=from_date, to_date=to_date, use_rollup=True
+            )
+        elif _s.use_sql_aggregation and hasattr(store, "core_aggregates"):
             result = compute_dashboard_data_sql(
                 dashboard_id, range_days, from_date=from_date, to_date=to_date
             )
@@ -941,6 +946,21 @@ def _slices_from_breakdown(rows: list[dict]) -> dict:
                         "pct": round(int(r["value"]) / total * 100, 1)} for r in rows]}
 
 
+# Raw-field row breakdowns (role_pie / channel_bar / country_bar / language_pie).
+_BREAKDOWN_KEY = {"Role": "by_role", "Channel": "by_channel",
+                  "Country": "by_country_field", "Language": "by_language_field"}
+
+
+def _breakdown(agg, dashboard_id, group_by, cf, ct):
+    """A rollup agg carries the folded breakdown (no scan); a core agg doesn't,
+    so fall back to a windowed SQL group-by. Decided per-agg (not by a global
+    flag) since rolling windows are served from core even in rollup mode."""
+    key = _BREAKDOWN_KEY.get(group_by, "")
+    if key in agg:
+        return agg.get(key) or []
+    return store.field_breakdown(dashboard_id, group_by, cf, ct)
+
+
 def _metric_from_agg(agg: dict, key: str, unit: str, window, **extra) -> dict:
     out = {"value": agg.get(key, 0) if agg else 0, "unit": unit, "window_days": window}
     out.update(extra)
@@ -950,6 +970,7 @@ def _metric_from_agg(agg: dict, key: str, unit: str, window, **extra) -> dict:
 def compute_dashboard_data_sql(
     dashboard_id: str, range_days: int | None = None, *,
     from_date: date | None = None, to_date: date | None = None,
+    use_rollup: bool = False,
 ) -> dict:
     d = store.get_dashboard(dashboard_id)
     if not d:
@@ -984,9 +1005,22 @@ def compute_dashboard_data_sql(
 
     agg_cache: dict = {}
     def get_agg(cf, ct):
-        if (cf, ct) not in agg_cache:
-            agg_cache[(cf, ct)] = store.core_aggregates(dashboard_id, cf, ct)
-        return agg_cache[(cf, ct)]
+        # Rollups are day-granular, so they're only EXACT for windows whose lower
+        # bound sits on a midnight (the unbounded `all` view, or an explicit
+        # calendar date-range). Rolling windows (7d/30d → now − N days) have a
+        # mid-day lower bound; serving those from rollups would over-count the
+        # partial boundary day, so route them to the timestamp-precise core path
+        # (already cheap, since a bounded window scans little). This keeps both
+        # paths exact and uses rollups where the cold-load cost actually lives.
+        rollup_ok = use_rollup and (cf is None or cf.time() == datetime.min.time())
+        key = (cf, ct, rollup_ok)
+        if key not in agg_cache:
+            if rollup_ok:
+                agg_cache[key] = store.rollup_aggregates(
+                    dashboard_id, cf.date() if cf else None, ct.date() if ct else None)
+            else:
+                agg_cache[key] = store.core_aggregates(dashboard_id, cf, ct)
+        return agg_cache[key]
 
     recent_cache: dict = {}
     def get_recent(limit):
@@ -1023,11 +1057,11 @@ def compute_dashboard_data_sql(
         elif ftype == "pie" and source == "ai_intent":
             value = {"slices": agg.get("intent", [])}
         elif ftype == "pie":
-            value = _slices_from_breakdown(store.field_breakdown(dashboard_id, f.get("group_by", "Role"), cf, ct))
+            value = _slices_from_breakdown(_breakdown(agg, dashboard_id, f.get("group_by", "Role"), cf, ct))
         elif ftype == "bar" and source == "language":
             value = {"bars": [{"label": b["label"], "value": b["value"]} for b in agg.get("languages", [])]}
         elif ftype == "bar":
-            rows = store.field_breakdown(dashboard_id, f.get("group_by", "Channel"), cf, ct)
+            rows = _breakdown(agg, dashboard_id, f.get("group_by", "Channel"), cf, ct)
             value = {"bars": [{"label": r["label"], "value": int(r["value"])} for r in rows]}
         elif ftype == "metric":
             value = _metric_value(f, agg, dashboard_id, cf, ct, eff, all_snaps, from_date, to_date)

@@ -196,5 +196,59 @@ SQL aggregates it trivially:
 - **Rove backfill** (~290k, one-time heavy write).
 - **User localhost test → push.** This removes the OOM in prod.
 
-### Phase 2 — rollups (mega-client → milliseconds)
-`daily_metrics` rollup updated incrementally as rows sync → reads touch ~days rows, not the raw table. Takes even Rove from ~1.8s to ~1ms.
+### Phase 2 — rollups (mega-client cold load → milliseconds)
+Fixes the *first-load* (cold-cache) latency that remains after Phase 1 — Rove's
+cold load is 3–8s because even SQL scans 283k rows.
+
+**Built & proven (2026-06-26):**
+- `session_rollup` (one row per conversation — distinct/session metrics + faq; a
+  window = sessions whose [started,ended] overlaps it, so the ~14% multi-day
+  sessions count once, exactly) and `daily_rollup` (one row per day — additive
+  metrics + volume).
+- `convo_build_rollups(id)` pure-SQL builder + `convo_rollup_aggregates(id,
+  from_day, to_day)` reader (same JSON shape, ~570 rows read instead of 283k).
+- Verified vs the live SQL path (Nest all-time): chats/users/avg-msgs/response/
+  sentiment/intent/volume all EXACT; languages/countries/topics/faq match on
+  counts, order differs on ties only (no source_row_index in rollups — cosmetic).
+
+**Built & wired (2026-06-26, behind `use_rollup_aggregation` flag, OFF):**
+- Read path: `compute_dashboard_data_sql(use_rollup=True)` swaps the aggregate
+  source to `store.rollup_aggregates` (day-bounded window); `compute_dashboard_data`
+  dispatches on the flag. Verified vs the SQL path (Nest, Al Habtoor, all-window)
+  — only diffs are live-data drift on the tiny `chats_today/week/month` scans and
+  topics/faq tie-order (counts exact).
+- Incremental maintenance: `convo_refresh_rollups(id, session_ids[], days[])`
+  rebuilds only touched sessions + days; the sync calls it after the flag refresh
+  (`_refresh_rollups` in sheets.py, reusing the rows fetched for flags).
+- `backfill_rollups.py` (one-time build via `convo_build_rollups`).
+
+**Note on timing:** local end-to-end measures 2–5s because every assembly
+round-trip pays ~200ms latency to Supabase (ap-northeast-1) from a dev machine.
+The server-side rollup read is **163ms**; on prod (Render→Supabase) it'll be far
+faster. Measure real speed after flipping `use_rollup_aggregation` on prod.
+
+**Breakdown-folding ✅ DONE (2026-06-26, still behind the OFF flag):** the
+raw-field breakdowns (role/channel/country/language pies/bars) are folded into
+`daily_rollup` (`role_counts`, `channel_counts`, `country_f_counts`,
+`language_f_counts`), populated by the builder + refresh, returned by
+`convo_rollup_aggregates` as `by_role/by_channel/by_country_field/by_language_field`,
+and read by the assembly via `_breakdown()` (uses the folded map when the agg
+carries the key, else falls back to `field_breakdown`). So the all-history view
+now does zero raw scans. Rebuilding Rove needs `set statement_timeout='240s'`
+(the 4 extra CTEs exceed the default PostgREST timeout on 283k rows).
+
+**Window dispatch ✅ (2026-06-26) — the correctness keystone for rollups:**
+rollups are day-granular, so they're only EXACT for windows whose lower bound is
+a midnight. A rolling window (7d/30d = `now − N days`) has a mid-day lower bound;
+serving it from rollups over-counts the partial boundary day (verified: it was
+inflating the 7d/30d counts). `get_agg` now routes rolling windows to the
+timestamp-precise **core** path (cheap — a bounded window scans little) and uses
+rollups only for the unbounded `all` view + explicit calendar date-ranges, which
+is exactly where the expensive cold load is. Both paths stay exact.
+
+**Verification:** `verify_rollup_aggregation.py` (rollup path vs the
+already-verified SQL path) went **72 diffs → 4** after the window-dispatch fix.
+The 4 residual diffs are all cosmetic: FAQ top-20 / topics top-40 tie-order at
+equal counts (rollups lack `source_row_index` for the first-seen tiebreak) + one
+Rove live-drift off-by-1. Every metric value matches. **Next:** localhost test,
+then flip `use_rollup_aggregation` on prod and measure real cold-load speed.
