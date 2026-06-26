@@ -141,7 +141,26 @@ def _real_fetch(integration, metric_type: str, lookback_days: int) -> list[GA4Sn
     rows) or legacy plaintext (any row written before the encrypt-at-
     rest change landed); `decrypt_or_passthrough` handles both.
     """
-    plain_creds = encryption.decrypt_or_passthrough(integration.credentials_json)
+    # Prefer a per-dashboard key if one was explicitly saved (a client using
+    # their own account — rare); otherwise use the global Nexa service account
+    # (GA4-specific env, else the shared Sheets account). Clients don't manage
+    # the admin, so the global account is the norm.
+    plain_creds = (
+        encryption.decrypt_or_passthrough(integration.credentials_json)
+        if getattr(integration, "credentials_json", None)
+        else ""
+    )
+    if not plain_creds:
+        settings = get_settings()
+        plain_creds = (
+            settings.google_ga4_service_account_json
+            or settings.google_sheets_service_account_json
+        )
+    if not plain_creds:
+        raise RuntimeError(
+            "No GA4 service account configured. Set GOOGLE_GA4_SERVICE_ACCOUNT_JSON "
+            "(or GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON) in the backend env."
+        )
     client = _build_client(plain_creds)
     property_id = integration.property_id
     rng_date_range = _date_range(lookback_days)

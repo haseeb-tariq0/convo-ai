@@ -279,6 +279,25 @@ def _timestamp_header(column_map: dict[str, str], headers: list[str]) -> str | N
     return None
 
 
+def _refresh_session_flags(dashboard_id: str, batch: list) -> None:
+    """Keep the precomputed session-flag columns current: for every session
+    touched by the new rows, reload the whole session and recompute its flags
+    (a flag is a property of the whole conversation, so a new message can change
+    it). Best-effort — a failure here must never break the sync."""
+    if not getattr(store, "chat_rows_for_sessions", None):
+        return  # store backend without flag support (e.g. in-memory tests)
+    try:
+        from .precompute import row_flag_updates
+
+        sids = {r.raw.get("Session ID") for r in batch if r.raw.get("Session ID")}
+        if not sids:
+            return
+        rows = store.chat_rows_for_sessions(dashboard_id, list(sids))
+        store.set_chat_row_flags(row_flag_updates(rows))
+    except Exception:  # noqa: BLE001
+        log.exception("session-flag refresh failed for dashboard %s", dashboard_id)
+
+
 def sync_all_dashboards() -> None:
     """Scheduler tick. Adds one mock row per dashboard when in mock mode;
     otherwise pulls only the NEW rows from each Sheet (incremental — resumes
@@ -320,6 +339,7 @@ def sync_all_dashboards() -> None:
                     ]
                     store.bulk_upsert_chat_rows(batch)
                     total_new += len(batch)
+                    _refresh_session_flags(d.id, batch)
             store.log_sync(
                 dashboard_id=d.id,
                 source="sheets",

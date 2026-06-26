@@ -395,6 +395,12 @@ export default function PublicDashboard({
   // Channels is dropped from the dashboard (WhatsApp-only) — flagged consumed
   // so it never renders, including in the Custom widgets fallback.
   const channelBar = byId('channel_bar') ?? buckets.bar.find((b) => b.label.toLowerCase().includes('channel')) ?? null
+  // GA4-sourced metrics are 0 for a Sheets-only client (no GA4 connected), so a
+  // "$0 revenue / 0 bookings" card just looks broken. Only surface revenue
+  // (card + ribbon tile) when there's actual revenue or bookings in the window.
+  const revenueHasData =
+    Number((revenueAed?.value as { value?: number } | null)?.value ?? 0) > 0 ||
+    Number((totalBookings?.value as { value?: number } | null)?.value ?? 0) > 0
   // KPI ribbon — up to 7 metrics in the v3 design's order; the escalation
   // breakdown fields are shown in the EscalationCard, not as standalone KPIs.
   const KPI_RIBBON_ORDER = [
@@ -413,8 +419,19 @@ export default function PublicDashboard({
   const kpiMetrics = [...orderedRibbon, ...extras].slice(0, 7)
   const renderableKpis = kpiMetrics.filter((m) => {
     const v = m.value as MetricValue
-    return !!v && typeof v === 'object' && !('error' in v)
+    if (!v || typeof v !== 'object' || 'error' in v) return false
+    // Drop the $0 GA4 revenue tile for Sheets-only clients.
+    if ((m.id === 'revenue_aed' || m.id === 'revenue_usd') && !revenueHasData) return false
+    return true
   })
+
+  // A brand-new client (sheet connected, but no conversations have synced yet)
+  // would otherwise see a grid of "0" tiles and "No data yet" cards. Detect the
+  // genuinely-empty case so we can show a single, reassuring getting-started
+  // panel instead. Signal: no recent rows, no volume points, zero total chats.
+  const totalChatsVal = Number((totalChats?.value as { value?: number } | null)?.value ?? 0)
+  const recentRowCount = ((heroTable?.value as { rows?: unknown[] } | null)?.rows?.length) ?? 0
+  const isEmptyDashboard = !heroLineHasData && recentRowCount === 0 && totalChatsVal === 0
 
   // Every field already shown by a curated card. Anything NOT in here (e.g. an
   // AI-added or manually-added widget that doesn't fit a curated slot) is
@@ -470,7 +487,7 @@ export default function PublicDashboard({
       }
       case 'conversion': {
         const showGauge = !!heroGauge && !hide('gauge')
-        const showRevenue = !!revenueAed && !hide('revenue')
+        const showRevenue = !!revenueAed && revenueHasData && !hide('revenue')
         const showEsc = !!(escWeek || escPos || escNeu || escNeg) && !hide('escalation')
         if (!showGauge && !showRevenue && !showEsc) return null
         return (
@@ -686,11 +703,16 @@ export default function PublicDashboard({
           <DateRangeControls value={window_} onChange={setWindow} />
         </div>
 
-        {/* Magazine sections, rendered in the admin-configured order with
-            section + per-card visibility applied. Default = full magazine. */}
-        {orderedSections
-          .filter((s) => s.visible)
-          .map((s, i) => renderSection(s.id, s.hiddenCards ?? [], i + 1))}
+        {/* Brand-new client with no conversations yet → a single reassuring
+            getting-started panel instead of a wall of zeros. Otherwise the
+            magazine sections in the admin-configured order. */}
+        {isEmptyDashboard ? (
+          <EmptyDashboardPanel brandTitle={brandTitle} />
+        ) : (
+          orderedSections
+            .filter((s) => s.visible)
+            .map((s, i) => renderSection(s.id, s.hiddenCards ?? [], i + 1))
+        )}
 
         {/* Footer */}
         <footer className="pub-footer">
@@ -705,6 +727,77 @@ export default function PublicDashboard({
             <span className="mono">v2.4.0</span>
           </div>
         </footer>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Empty / getting-started panel — shown when a dashboard is connected but
+// no conversations have synced yet, so a brand-new client sees a calm,
+// branded "we're ready, waiting for data" screen instead of a grid of zeros.
+// ─────────────────────────────────────────────────────────────────────
+function EmptyDashboardPanel({ brandTitle }: { brandTitle: string }) {
+  const previews = [
+    { icon: 'volume' as const, label: 'Conversation volume over time' },
+    { icon: 'conversion' as const, label: 'Sentiment & escalations' },
+    { icon: 'intent' as const, label: 'Top questions & topics' },
+    { icon: 'geography' as const, label: 'Guest countries' },
+  ]
+  return (
+    <div
+      style={{
+        margin: '40px auto', maxWidth: 620, textAlign: 'center',
+        background: 'var(--d-surface)', border: '1px solid var(--d-border)',
+        borderRadius: 16, padding: '44px 40px',
+      }}
+    >
+      <div
+        style={{
+          width: 56, height: 56, margin: '0 auto 20px', borderRadius: 16,
+          display: 'grid', placeItems: 'center',
+          background: 'var(--accent-soft, rgba(30,41,59,.08))', color: 'var(--accent)',
+        }}
+      >
+        <Glyph name="refresh" size={24} />
+      </div>
+      <div
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 7, marginBottom: 14,
+          padding: '5px 12px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+          color: 'var(--pos)', background: 'var(--pos-soft)',
+        }}
+      >
+        <span className="pulse" style={{ width: 7, height: 7, borderRadius: 999, background: 'var(--pos)', display: 'inline-block' }} />
+        Connected · listening for conversations
+      </div>
+      <h2 style={{ fontSize: 22, fontWeight: 650, color: 'var(--d-fg)', margin: '0 0 10px' }}>
+        {brandTitle}'s dashboard is ready
+      </h2>
+      <p style={{ fontSize: 14, lineHeight: 1.6, color: 'var(--fg-3)', margin: '0 auto 28px', maxWidth: 460 }}>
+        We're connected to your data source and waiting for the first conversations to come
+        in. As soon as they do, your live analytics appear here automatically — no refresh
+        needed.
+      </p>
+      <div
+        style={{
+          display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10,
+          textAlign: 'left', maxWidth: 460, margin: '0 auto',
+        }}
+      >
+        {previews.map((p) => (
+          <div
+            key={p.label}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',
+              border: '1px solid var(--d-border)', borderRadius: 10,
+              background: 'var(--surface-2)', fontSize: 12.5, color: 'var(--fg-2)',
+            }}
+          >
+            <span style={{ color: 'var(--fg-4)', display: 'inline-flex' }}><Glyph name={p.icon} size={15} /></span>
+            {p.label}
+          </div>
+        ))}
       </div>
     </div>
   )

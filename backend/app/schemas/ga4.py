@@ -5,7 +5,9 @@ from pydantic import BaseModel, Field
 
 class GA4ConfigIn(BaseModel):
     property_id: str = Field(min_length=1)
-    credentials_json: str = Field(min_length=1)  # full service-account JSON
+    # Optional: blank → use the global Nexa service account (the default). Only
+    # set when a client insists on their own GA4 service account.
+    credentials_json: str = ""
     conversion_event_name: str = "purchase"
     lookback_days: int = Field(default=30, ge=1, le=365)
     sync_users: bool = True

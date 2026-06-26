@@ -232,6 +232,7 @@ html[data-density="roomy"]   { --row-pad-y: 18px; --section-gap: 56px; }
 .rail-status .meta { font-family: var(--d-font-mono); font-size: 10.5px; letter-spacing: 0.02em; }
 
 .rail-user {
+  margin-top: auto; /* pin the user pill to the bottom of the rail */
   padding: 12px 14px;
   border-top: var(--hairline) solid var(--rail-border);
   display: flex; align-items: center; gap: 10px;

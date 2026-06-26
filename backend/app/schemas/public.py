@@ -34,3 +34,21 @@ class PublicFieldValue(BaseModel):
 class PublicDashboardData(BaseModel):
     fields: list[PublicFieldValue]
     generated_at: datetime
+
+
+class PublicAskMessage(BaseModel):
+    role: str  # "user" | "assistant"
+    content: str
+
+
+class PublicAskIn(BaseModel):
+    messages: list[PublicAskMessage]
+    # Window the viewer currently has selected — grounds the answer on the same
+    # data the dashboard is showing AND reuses its warm aggregation cache.
+    range_days: int | None = None
+    from_date: str | None = None
+    to_date: str | None = None
+
+
+class PublicAskOut(BaseModel):
+    reply: str

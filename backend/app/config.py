@@ -49,6 +49,15 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-haiku-4-5-20251001"
     google_sheets_service_account_json: str = ""
+    # GA4 uses the same global Nexa service account by default (clients never
+    # touch the admin, so there's no reason to paste a key per dashboard). If
+    # unset, falls back to the Sheets service account. A per-dashboard key is
+    # only used if one is explicitly saved (rare — a client's own account).
+    google_ga4_service_account_json: str = ""
+    # Aggregate dashboard data in Postgres (RPC) instead of loading every
+    # chat_row into Python. Fixes the memory/OOM problem at scale. See
+    # docs/SCALING.md. Off by default until verified per-deployment.
+    use_sql_aggregation: bool = False
 
     # Symmetric encryption key for at-rest secrets (per-client AI keys,
     # GA4 credentials when that path lands). Base64-encoded 32-byte

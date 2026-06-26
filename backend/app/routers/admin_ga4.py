@@ -43,6 +43,10 @@ def upsert(
     data = payload.model_dump()
     if data.get("credentials_json"):
         data["credentials_json"] = encryption.encrypt(data["credentials_json"])
+    else:
+        # Blank → use the global Nexa service account; don't overwrite any
+        # explicitly-saved per-client key.
+        data.pop("credentials_json", None)
     g = store.upsert_ga4(client_id, **data)
     audit.log_action(
         principal,

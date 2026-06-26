@@ -77,16 +77,6 @@ function Sidebar() {
         <RailLink to="/admin/settings" iconId="settings" label="Settings" />
       </nav>
 
-      <div className="rail-status">
-        <div className="ws">Nexa Digital</div>
-        <div className="meta">
-          <span className="ok">All systems green</span>
-        </div>
-        <div className="meta" style={{ marginTop: 8, color: 'var(--rail-fg-mute)' }}>
-          live · syncing every 30s
-        </div>
-      </div>
-
       <SidebarUserPill />
     </aside>
   )
@@ -100,6 +90,10 @@ function Sidebar() {
 // ─────────────────────────────────────────────────────────────────────
 function SidebarUserPill() {
   const user = getUser()
+  // Avatar URLs (e.g. Google) frequently fail to load (referrer policy, rate
+  // limits, stale links) — fall back to the initial when they do, not a
+  // broken-image icon.
+  const [avatarOk, setAvatarOk] = useState(true)
   // First letter of name OR email for the avatar fallback.
   const initial = (user?.name || user?.email || 'A').charAt(0).toUpperCase()
   const displayName = user?.name || user?.email?.split('@')[0] || 'Admin'
@@ -137,12 +131,14 @@ function SidebarUserPill() {
           cursor: 'pointer',
         }}
       >
-        {user?.avatar_url ? (
+        {user?.avatar_url && avatarOk ? (
           <img
             src={user.avatar_url}
             alt=""
             width={26}
             height={26}
+            referrerPolicy="no-referrer"
+            onError={() => setAvatarOk(false)}
             // pointer-events: none — defensive against the case where the
             // browser treats the img as the click target and skips bubbling
             // to the button. Click on the img always becomes a click on

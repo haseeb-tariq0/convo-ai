@@ -589,7 +589,6 @@ function GA4Tab({
 }) {
   const [editing, setEditing] = useState(!ga4)
   const [propId, setPropId] = useState(ga4?.property_id ?? '')
-  const [credsJson, setCredsJson] = useState('')
   const [convEvent, setConvEvent] = useState(ga4?.conversion_event_name ?? 'purchase')
   const [lookback, setLookback] = useState(ga4?.lookback_days ?? 30)
   const [busy, setBusy] = useState(false)
@@ -599,15 +598,16 @@ function GA4Tab({
     setBusy(true)
     setErr(null)
     try {
+      // No credentials_json — GA4 uses the global Nexa service account (set in
+      // the backend env). Clients never touch the admin, so there's no per-
+      // dashboard key to manage.
       const body: Record<string, unknown> = {
         property_id: propId.trim(),
         conversion_event_name: convEvent.trim() || 'purchase',
         lookback_days: Number(lookback) || 30,
       }
-      if (credsJson.trim()) body.credentials_json = credsJson.trim()
       await admin.upsertGA4(clientId, body)
       setEditing(false)
-      setCredsJson('')
       onChange()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Save failed')
@@ -709,19 +709,10 @@ function GA4Tab({
           />
           <span className="help">Numeric ID, not the measurement ID (G-XXX). GA4 → Admin → Property Settings.</span>
         </div>
-        <div className="form-row">
-          <span className="l">
-            Service account JSON {ga4 && <span style={{ color: 'var(--fg-4)', textTransform: 'none' }}>— leave blank to keep current</span>}
-          </span>
-          <textarea
-            className="form-input mono"
-            style={{ height: 120, padding: '10px 10px', lineHeight: 1.5 }}
-            placeholder='{"type":"service_account",…}'
-            value={credsJson}
-            onChange={(e) => setCredsJson(e.target.value)}
-          />
-          <span className="help">Stored encrypted at rest. Add the service-account email as a Viewer in GA4.</span>
-        </div>
+        <span className="help" style={{ display: 'block', marginTop: -4 }}>
+          GA4 connects with the Nexa service account automatically — just add its
+          email as a <strong>Viewer</strong> on the client’s GA4 property. No key to paste.
+        </span>
         <div className="form-grid-2">
           <div className="form-row">
             <span className="l">Conversion event</span>

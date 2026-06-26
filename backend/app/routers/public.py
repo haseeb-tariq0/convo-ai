@@ -2,7 +2,11 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
-from ..schemas.public import PublicDashboardConfig, PublicDashboardData, PublicFieldValue
+from ..schemas.public import (
+    PublicDashboardConfig,
+    PublicDashboardData,
+    PublicFieldValue,
+)
 from ..services.aggregations import compute_dashboard_data
 from ..store import store
 

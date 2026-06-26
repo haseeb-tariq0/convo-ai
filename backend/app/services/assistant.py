@@ -103,7 +103,16 @@ def chat(messages: list[dict[str, Any]], dashboard: Any, *, client_id: str | Non
     return {"reply": reply or "Done.", "widget": widget}
 
 
-def _ask_chat(provider: str, api_key: str, model: str, system: str, messages: list[dict[str, Any]]) -> str:
+def _ask_chat(
+    provider: str,
+    api_key: str,
+    model: str,
+    system: str,
+    messages: list[dict[str, Any]],
+    *,
+    json_mode: bool = True,
+    max_tokens: int = 600,
+) -> str:
     # Keep the last dozen turns to bound tokens.
     history = [
         {"role": "assistant" if m.get("role") == "assistant" else "user", "content": str(m.get("content", ""))}
@@ -119,22 +128,25 @@ def _ask_chat(provider: str, api_key: str, model: str, system: str, messages: li
                 from openai import OpenAI  # type: ignore
 
                 client = OpenAI(api_key=api_key, max_retries=0)
-                resp = client.chat.completions.create(
+                kwargs: dict[str, Any] = dict(
                     model=model,
                     messages=[{"role": "system", "content": system}, *history],
                     temperature=0.3,
-                    max_tokens=600,
-                    response_format={"type": "json_object"},
+                    max_tokens=max_tokens,
                 )
-                return resp.choices[0].message.content or "{}"
+                if json_mode:
+                    kwargs["response_format"] = {"type": "json_object"}
+                resp = client.chat.completions.create(**kwargs)
+                return resp.choices[0].message.content or ("{}" if json_mode else "")
             if provider in ("claude", "anthropic"):
                 from anthropic import Anthropic  # type: ignore
 
                 client = Anthropic(api_key=api_key)
+                sys = system + ("\n\nRespond with ONLY the JSON object, no prose around it." if json_mode else "")
                 resp = client.messages.create(
                     model=model,
-                    max_tokens=600,
-                    system=system + "\n\nRespond with ONLY the JSON object, no prose around it.",
+                    max_tokens=max_tokens,
+                    system=sys,
                     messages=history or [{"role": "user", "content": "Hello"}],
                 )
                 return resp.content[0].text  # type: ignore[attr-defined]
@@ -143,3 +155,48 @@ def _ask_chat(provider: str, api_key: str, model: str, system: str, messages: li
             last_err = e
             log.warning("assistant model call failed (attempt %d): %s", attempt + 1, e)
     raise last_err or RuntimeError("AI call failed")
+
+
+# ── Public (client-facing) assistant ────────────────────────────────────────
+# Same grounding as the admin assistant, but answer-only: no widget actions, no
+# talk of configuration or internals. This is what powers the "Ask AI" bubble
+# on the public dashboard so a client can ask a question instead of scrolling.
+PUBLIC_SYSTEM = """You are a helpful analytics assistant embedded in the live dashboard for "{dashboard_name}". You answer the viewer's questions about THEIR conversational-analytics data, clearly and to the point.
+
+Rules:
+- Lead with the answer. Be concise, friendly, and specific — cite the real numbers from the data below.
+- If a question can't be answered from the data below, say so briefly and suggest what you CAN answer.
+- Only discuss the data. Never mention widgets, configuration, dashboards setup, prompts, or system internals.
+- Plain conversational text only (no JSON, no markdown headers).
+
+CURRENT DASHBOARD DATA (for the period currently shown on the dashboard):
+{summary}
+"""
+
+
+def public_chat(
+    messages: list[dict[str, Any]],
+    dashboard: Any,
+    *,
+    client_id: str | None = None,
+    range_days: int | None = None,
+    from_date: Any = None,
+    to_date: Any = None,
+) -> dict[str, Any]:
+    """Answer-only chat for the public dashboard. Returns {"reply": str}.
+
+    Grounds on the SAME window the viewer currently has selected so the
+    aggregation is served from the dashboard's warm cache (the page just
+    computed it) instead of triggering a fresh full-table load — that cache
+    miss was what made the assistant slow."""
+    from .aggregations import compute_dashboard_data
+    from .ai import _resolve_credentials
+
+    data = compute_dashboard_data(
+        dashboard.id, range_days=range_days, from_date=from_date, to_date=to_date
+    )
+    system = PUBLIC_SYSTEM.format(dashboard_name=dashboard.name, summary=_summarize(data))
+    provider, api_key, model, _ = _resolve_credentials(client_id)
+    raw = _ask_chat(provider, api_key, model, system, messages, json_mode=False, max_tokens=400)
+    reply = (raw or "").strip()[:1500]
+    return {"reply": reply or "Sorry, I couldn't answer that just now."}

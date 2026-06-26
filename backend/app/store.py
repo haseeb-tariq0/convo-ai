@@ -933,6 +933,85 @@ class _SupabaseStore:
                 return None
         return val
 
+    def core_aggregates(self, dashboard_id: str, from_dt=None, to_dt=None) -> dict:
+        """Phase-1 scaling fix: ask Postgres to aggregate (counts / distinct /
+        avg / daily volume) and return one small JSON object, instead of loading
+        every row into the app. Memory stays flat regardless of client size.
+        Mirrors the Python aggregation exactly — see migration 0012 and
+        docs/SCALING.md."""
+        res = self._sb.rpc(
+            "convo_core_aggregates",
+            {
+                "p_dashboard_id": dashboard_id,
+                "p_from": from_dt.isoformat() if from_dt else None,
+                "p_to": to_dt.isoformat() if to_dt else None,
+            },
+        ).execute()
+        return res.data or {}
+
+    def field_breakdown(self, dashboard_id: str, field: str, from_dt=None, to_dt=None) -> list[dict]:
+        """Row counts per value of a raw field (role/language/channel/country) —
+        for the pie/bar widgets, via SQL group-by (no row load)."""
+        res = self._sb.rpc("convo_field_breakdown", {
+            "p_dashboard_id": dashboard_id, "p_field": field,
+            "p_from": from_dt.isoformat() if from_dt else None,
+            "p_to": to_dt.isoformat() if to_dt else None,
+        }).execute()
+        return res.data or []
+
+    def keyword_count(self, dashboard_id: str, keywords: list[str], content_field: str = "Content",
+                      from_dt=None, to_dt=None) -> int:
+        res = self._sb.rpc("convo_keyword_count", {
+            "p_dashboard_id": dashboard_id, "p_keywords": keywords, "p_content_field": content_field,
+            "p_from": from_dt.isoformat() if from_dt else None,
+            "p_to": to_dt.isoformat() if to_dt else None,
+        }).execute()
+        return res.data or 0
+
+    def row_count_window(self, dashboard_id: str, from_dt=None, to_dt=None) -> int:
+        res = self._sb.rpc("convo_row_count", {
+            "p_dashboard_id": dashboard_id,
+            "p_from": from_dt.isoformat() if from_dt else None,
+            "p_to": to_dt.isoformat() if to_dt else None,
+        }).execute()
+        return res.data or 0
+
+    def set_chat_row_flags(self, updates: list[dict]) -> None:
+        """Bulk-write precomputed session flags (escalation_sentiment,
+        is_in_house, has_booking_link, detected_language, country, faq_question)
+        — chunked, via the set_chat_row_flags RPC. Used by the backfill and sync."""
+        if not updates:
+            return
+        for i in range(0, len(updates), self._BULK_CHUNK):
+            chunk = updates[i : i + self._BULK_CHUNK]
+            self._sb.rpc("set_chat_row_flags", {"updates": chunk}).execute()
+
+    def chat_rows_for_sessions(self, dashboard_id: str, session_ids: list[str]) -> list[ChatRow]:
+        """All rows of the given sessions (for recomputing session-level flags
+        when new messages arrive). Small targeted fetch, not a full table load."""
+        if not session_ids:
+            return []
+        res = self._sb.rpc(
+            "convo_session_rows",
+            {"p_dashboard_id": dashboard_id, "p_session_ids": list(session_ids)},
+        ).execute()
+        return [_from_row(ChatRow, r) for r in (res.data or [])]
+
+    def recent_chat_rows(self, dashboard_id: str, limit: int = 20) -> list[ChatRow]:
+        """Most-recent N rows for the recent-conversations table, fetched with
+        `order by occurred_at desc limit N` — so we never load the whole table
+        just to show 20 rows. nulls last matches the Python sort (occurred_at or
+        datetime.min, reversed)."""
+        res = (
+            self._table("chat_rows")
+            .select("*")
+            .eq("dashboard_id", dashboard_id)
+            .order("occurred_at", desc=True, nullsfirst=False)
+            .limit(limit)
+            .execute()
+        )
+        return [_from_row(ChatRow, r) for r in (res.data or [])]
+
     def upsert_chat_row(self, row: ChatRow) -> ChatRow:
         # Postgres unique (dashboard_id, source_row_index) handles dedup —
         # use on_conflict so a re-sync of the same sheet row is idempotent.

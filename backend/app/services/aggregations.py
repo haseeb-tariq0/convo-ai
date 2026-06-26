@@ -796,9 +796,18 @@ def compute_dashboard_data(
             hit = _cache.get(key)
             if hit and now - hit[0] < _CACHE_TTL:
                 return hit[1]
-        result = _compute_dashboard_data_uncached(
-            dashboard_id, range_days, from_date=from_date, to_date=to_date
-        )
+        # SQL path (Postgres aggregation) when enabled AND the store supports it
+        # (the Supabase backend); otherwise the in-Python path. Gated so we can
+        # flip per-deployment after verifying.
+        from ..config import get_settings
+        if get_settings().use_sql_aggregation and hasattr(store, "core_aggregates"):
+            result = compute_dashboard_data_sql(
+                dashboard_id, range_days, from_date=from_date, to_date=to_date
+            )
+        else:
+            result = _compute_dashboard_data_uncached(
+                dashboard_id, range_days, from_date=from_date, to_date=to_date
+            )
         with _cache_guard:
             if len(_cache) >= _CACHE_MAX:
                 _cache.clear()
@@ -913,3 +922,167 @@ def _compute_dashboard_data_uncached(
             }
         )
     return {"fields": out_fields, "generated_at": datetime.now(timezone.utc)}
+
+
+# ── SQL-backed path ─────────────────────────────────────────────────────────
+# Same output as _compute_dashboard_data_uncached, but reads small aggregates
+# from Postgres (convo_core_aggregates RPC + field_breakdown/keyword/row_count
+# helpers) instead of loading every chat_row into Python. GA4 / recent-table /
+# map-embed widgets reuse compute_field with their small data sources, so those
+# stay byte-identical. Gated behind settings.use_sql_aggregation; verified
+# field-by-field against the Python path before flipping.
+_ESC_BUCKET_KEY = {"positive": "escalated_positive", "negative": "escalated_negative",
+                   "neutral": "escalated_neutral", "unknown": "escalated_neutral"}
+
+
+def _slices_from_breakdown(rows: list[dict]) -> dict:
+    total = sum(int(r["value"]) for r in rows) or 1
+    return {"slices": [{"label": r["label"], "value": int(r["value"]),
+                        "pct": round(int(r["value"]) / total * 100, 1)} for r in rows]}
+
+
+def _metric_from_agg(agg: dict, key: str, unit: str, window, **extra) -> dict:
+    out = {"value": agg.get(key, 0) if agg else 0, "unit": unit, "window_days": window}
+    out.update(extra)
+    return out
+
+
+def compute_dashboard_data_sql(
+    dashboard_id: str, range_days: int | None = None, *,
+    from_date: date | None = None, to_date: date | None = None,
+) -> dict:
+    d = store.get_dashboard(dashboard_id)
+    if not d:
+        return {"fields": [], "generated_at": datetime.now(timezone.utc)}
+    ga4 = store.get_ga4_for_client(d.client_id)
+    all_snaps = store.snapshots_for_integration(ga4.id) if ga4 else []
+    now = datetime.now(timezone.utc)
+    from_dt = (datetime.combine(from_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+               if from_date else None)
+    to_dt = (datetime.combine(to_date, datetime.max.time()).replace(tzinfo=timezone.utc)
+             if to_date else None)
+    has_explicit = from_dt is not None or to_dt is not None
+    _micro = timedelta(microseconds=1)
+
+    def resolve(field_window_days):
+        """→ ((cur_from, cur_to), (prev_from, prev_to), effective_window_days)."""
+        if field_window_days:
+            return ((now - timedelta(days=field_window_days), None),
+                    (now - timedelta(days=2 * field_window_days),
+                     now - timedelta(days=field_window_days) - _micro), field_window_days)
+        if has_explicit:
+            if from_dt is not None and to_dt is not None:
+                span = to_dt - from_dt
+                approx = max(1, (to_date - from_date).days + 1)
+                return ((from_dt, to_dt), (from_dt - span, from_dt - _micro), approx)
+            return ((from_dt, to_dt), (None, None), None)
+        if range_days:
+            return ((now - timedelta(days=range_days), None),
+                    (now - timedelta(days=2 * range_days),
+                     now - timedelta(days=range_days) - _micro), range_days)
+        return ((None, None), (None, None), None)
+
+    agg_cache: dict = {}
+    def get_agg(cf, ct):
+        if (cf, ct) not in agg_cache:
+            agg_cache[(cf, ct)] = store.core_aggregates(dashboard_id, cf, ct)
+        return agg_cache[(cf, ct)]
+
+    recent_cache: dict = {}
+    def get_recent(limit):
+        if limit not in recent_cache:
+            recent_cache[limit] = store.recent_chat_rows(dashboard_id, limit)
+        return recent_cache[limit]
+
+    out_fields = []
+    for f in d.field_config:
+        ftype, source = f.get("type"), f.get("source")
+        (cf, ct), (pf, pt), eff = resolve(f.get("window_days"))
+        agg = get_agg(cf, ct)
+        f_eff = {**f, "window_days": eff} if eff else f
+        value: Any
+
+        # GA4 / map-embed / recent table → reuse compute_field with small data.
+        if source in ("ga4", "ga4_traffic", "ga4_country", "ga4_revenue"):
+            snaps = _ga4_within_window(all_snaps, eff, from_date_=from_date, to_date_=to_date)
+            value = compute_field(f_eff, [], snaps)
+        elif ftype == "table" and source == "faq_questions":
+            value = {"columns": ["Question", "Conversations"], "rows": agg.get("faq", [])}
+        elif ftype == "table":
+            value = compute_field(f_eff, get_recent(int(f.get("limit", 20))), [])
+        elif ftype == "map" and source == "phone_country":
+            value = agg.get("countries", {"points": [], "total": 0})
+        elif ftype == "map":
+            value = compute_field(f_eff, [], [])
+        elif ftype == "gauge":
+            value = {"value": agg.get("sentiment_avg") or 0.0, "min": -1.0, "max": 1.0}
+        elif ftype == "line":
+            value = {"points": agg.get("volume_sessions_by_day", [])}
+        elif ftype == "tag_cloud":
+            value = {"tags": agg.get("topics", [])}
+        elif ftype == "pie" and source == "ai_intent":
+            value = {"slices": agg.get("intent", [])}
+        elif ftype == "pie":
+            value = _slices_from_breakdown(store.field_breakdown(dashboard_id, f.get("group_by", "Role"), cf, ct))
+        elif ftype == "bar" and source == "language":
+            value = {"bars": [{"label": b["label"], "value": b["value"]} for b in agg.get("languages", [])]}
+        elif ftype == "bar":
+            rows = store.field_breakdown(dashboard_id, f.get("group_by", "Channel"), cf, ct)
+            value = {"bars": [{"label": r["label"], "value": int(r["value"])} for r in rows]}
+        elif ftype == "metric":
+            value = _metric_value(f, agg, dashboard_id, cf, ct, eff, all_snaps, from_date, to_date)
+        else:
+            value = compute_field(f_eff, [], [])
+
+        # Deltas (metrics) + comparison line (line) from the previous window.
+        if isinstance(value, dict) and eff and not value.get("error") and (pf or pt):
+            pagg = get_agg(pf, pt)
+            if ftype == "metric" and source != "ga4":
+                pv = _metric_value(f, pagg, dashboard_id, pf, pt, eff, all_snaps, None, None).get("value")
+                cur = value.get("value")
+                if isinstance(pv, (int, float)):
+                    value["previous_value"] = pv
+                    if isinstance(cur, (int, float)) and pv != 0:
+                        value["delta_pct"] = round(((cur - pv) / pv) * 100, 1)
+                    elif isinstance(cur, (int, float)) and pv == 0 and cur != 0:
+                        value["delta_pct"] = None
+            elif ftype == "line":
+                value["previous_points"] = pagg.get("volume_sessions_by_day", [])
+
+        out_fields.append({"id": f.get("id", ""), "type": ftype or "",
+                           "label": f.get("label", ""), "value": value})
+    return {"fields": out_fields, "generated_at": datetime.now(timezone.utc)}
+
+
+def _metric_value(f, agg, dashboard_id, cf, ct, eff, all_snaps, from_date, to_date) -> dict:
+    """Map a metric field to its value dict from the SQL aggregates."""
+    source = f.get("source")
+    simple = {
+        "chat_sessions": ("total_chats", "chats"),
+        "user_messages": ("user_messages", "user msgs"),
+        "unique_users": ("unique_users", "users"),
+        "avg_messages_per_chat": ("avg_messages_per_chat", "msgs/chat"),
+        "avg_response_time_seconds": ("avg_response_time", "seconds"),
+        "human_escalations": ("escalations", "escalations"),
+        "in_house_guests": ("in_house_guests", "in-house"),
+        "booking_links_shared": ("booking_links_shared", "links shared"),
+    }
+    if source in simple:
+        key, unit = simple[source]
+        return _metric_from_agg(agg, key, unit, eff)
+    if source == "escalated_by_sentiment":
+        target = str(f.get("sentiment") or "").lower()
+        key = _ESC_BUCKET_KEY.get(target, "escalated_neutral")
+        return _metric_from_agg(agg, key, target or "escalations", eff)
+    if source == "chat_count":
+        return {"value": store.row_count_window(dashboard_id, cf, ct), "unit": "chats", "window_days": eff}
+    if source == "keyword_count":
+        kws = [str(k) for k in (f.get("keywords") or []) if str(k).strip()]
+        if not kws:
+            return {"value": 0, "unit": "mentions", "window_days": eff, "keywords": []}
+        n = store.keyword_count(dashboard_id, kws, f.get("content_field", "Content"), cf, ct)
+        return {"value": n, "unit": "mentions", "window_days": eff, "keywords": f.get("keywords")}
+    if source == "ga4":
+        snaps = _ga4_within_window(all_snaps, eff, from_date_=from_date, to_date_=to_date)
+        return compute_field({**f, "window_days": eff} if eff else f, [], snaps)
+    return {"value": 0, "unit": "", "window_days": eff}

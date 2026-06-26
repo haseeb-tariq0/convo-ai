@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
@@ -36,7 +37,13 @@ async def lifespan(app: FastAPI):
 
     # Seed first so the scheduler's first tick finds something to sync.
     seed.run(store, frontend_url=settings.frontend_url, admin_token=settings.admin_token)
-    start_scheduler()
+    # DISABLE_SCHEDULER lets a local dev run the API without the background
+    # jobs, which is important because local runs share the PRODUCTION Supabase
+    # — leaving the scheduler on writes sync logs / AI enrichment to prod.
+    if os.environ.get("DISABLE_SCHEDULER", "").lower() in ("1", "true", "yes"):
+        log.warning("scheduler DISABLED via DISABLE_SCHEDULER env")
+    else:
+        start_scheduler()
 
     log.info("convo-ai backend ready (env=%s)", settings.app_env)
     yield
