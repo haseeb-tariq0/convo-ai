@@ -654,8 +654,8 @@ export default function PublicDashboard({
         <div className="page-head">
           <div className="page-head-lockup">
             {cfg.brand_logo_url ? (
-              <span className="brand-logo size-lg">
-                <img src={cfg.brand_logo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              <span className="brand-logo brand-logo--img size-lg">
+                <img src={cfg.brand_logo_url} alt={brandTitle} />
               </span>
             ) : (
               <BrandLogo brand={brand} size="lg" />
